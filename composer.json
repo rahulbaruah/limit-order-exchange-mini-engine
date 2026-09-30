@@ -63,6 +63,10 @@
         "lint:check": [
             "pint --parallel --test"
         ],
+        "hooks:install": [
+            "git config core.hooksPath .githooks",
+            "@php -r \"@chmod('.githooks/pre-commit', 0755);\""
+        ],
         "ci:check": [
             "Composer\\Config::disableProcessTimeout",
             "npm run check",

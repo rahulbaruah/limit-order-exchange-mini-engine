@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 use App\Enums\OrderSide;
 use App\Enums\OrderStatus;
 use App\Enums\Symbol;
