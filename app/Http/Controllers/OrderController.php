@@ -13,7 +13,7 @@ use Illuminate\Http\JsonResponse;
 class OrderController extends Controller
 {
     /**
-     * Store a newly created buy order for the authenticated user.
+     * Store a newly created limit order for the authenticated user.
      */
     public function store(CreateOrderRequest $request, CreateOrder $action): JsonResponse
     {

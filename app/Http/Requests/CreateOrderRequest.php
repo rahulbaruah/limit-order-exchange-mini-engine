@@ -40,7 +40,7 @@ class CreateOrderRequest extends FormRequest
         return [
             'idempotency_key' => ['required', 'string', 'max:255'],
             'symbol' => ['required', Rule::enum(Symbol::class)],
-            'side' => ['required', Rule::enum(OrderSide::class)->only(OrderSide::Buy)],
+            'side' => ['required', Rule::enum(OrderSide::class)],
             'price' => ['required', 'numeric', 'gt:0', 'decimal:0,2'],
             'amount' => ['required', 'numeric', 'gt:0', 'decimal:0,8'],
         ];

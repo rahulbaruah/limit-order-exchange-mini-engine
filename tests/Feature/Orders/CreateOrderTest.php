@@ -5,6 +5,7 @@ declare(strict_types=1);
 use App\Enums\OrderSide;
 use App\Enums\OrderStatus;
 use App\Enums\Symbol;
+use App\Models\Asset;
 use App\Models\Order;
 use App\Models\User;
 
@@ -137,12 +138,6 @@ test('invalid orders are rejected without changing balances', function (array $p
     'unknown symbol' => [[
         'symbol' => 'DOGE',
         'side' => 'buy',
-        'price' => '95000.00',
-        'amount' => '0.01000000',
-    ]],
-    'sell side' => [[
-        'symbol' => 'BTC',
-        'side' => 'sell',
         'price' => '95000.00',
         'amount' => '0.01000000',
     ]],
@@ -320,4 +315,157 @@ test('an unsuccessful order does not consume the idempotency key', function () {
     ], ['Idempotency-Key' => 'unconsumed-key'])->assertCreated();
 
     expect(Order::query()->count())->toBe(1);
+});
+
+test('an authenticated user can place an open sell order', function () {
+    $user = User::factory()->funded('1000.00')->create();
+    Asset::factory()->for($user)->create(['symbol' => Symbol::Btc, 'amount' => '0.50000000']);
+
+    $response = $this->actingAs($user)->postJson('/api/orders', [
+        'symbol' => 'BTC',
+        'side' => 'sell',
+        'price' => '95000.00',
+        'amount' => '0.01000000',
+    ], ['Idempotency-Key' => 'sell-created']);
+
+    $response->assertCreated()
+        ->assertJsonPath('data.symbol', 'BTC')
+        ->assertJsonPath('data.side', 'sell')
+        ->assertJsonPath('data.price', '95000.00')
+        ->assertJsonPath('data.amount', '0.01000000')
+        ->assertJsonPath('data.status', 'open');
+
+    $order = Order::query()->sole();
+
+    expect($order->side)->toBe(OrderSide::Sell)
+        ->and($order->status)->toBe(OrderStatus::Open);
+
+    $asset = Asset::query()->where('user_id', $user->id)->where('symbol', Symbol::Btc)->sole();
+    $user->refresh();
+
+    expect($asset->amount)->toBe('0.49000000')
+        ->and($asset->locked_amount)->toBe('0.01000000')
+        ->and($user->balance)->toBe('1000.00')
+        ->and($user->locked_balance)->toBe('0.00');
+});
+
+test('eth sell orders are accepted', function () {
+    $user = User::factory()->funded('1000.00')->create();
+    Asset::factory()->for($user)->eth()->create(['amount' => '2.00000000']);
+
+    $this->actingAs($user)->postJson('/api/orders', [
+        'symbol' => 'ETH',
+        'side' => 'sell',
+        'price' => '3000.00',
+        'amount' => '1.50000000',
+    ], ['Idempotency-Key' => 'eth-sell'])->assertCreated()->assertJsonPath('data.side', 'sell');
+
+    $asset = Asset::query()->where('user_id', $user->id)->where('symbol', Symbol::Eth)->sole();
+
+    expect($asset->amount)->toBe('0.50000000')
+        ->and($asset->locked_amount)->toBe('1.50000000');
+});
+
+test('a sell order exceeding the available asset amount is rejected', function () {
+    $user = User::factory()->funded('1000.00')->create();
+    Asset::factory()->for($user)->create(['symbol' => Symbol::Btc, 'amount' => '0.00500000']);
+
+    $this->actingAs($user)->postJson('/api/orders', [
+        'symbol' => 'BTC',
+        'side' => 'sell',
+        'price' => '95000.00',
+        'amount' => '0.01000000',
+    ], ['Idempotency-Key' => 'insufficient-assets'])
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors('asset_balance');
+
+    $asset = Asset::query()->where('user_id', $user->id)->where('symbol', Symbol::Btc)->sole();
+
+    expect(Order::query()->count())->toBe(0)
+        ->and($asset->amount)->toBe('0.00500000')
+        ->and($asset->locked_amount)->toBe('0.00000000');
+});
+
+test('a sell order without an asset holding is rejected', function () {
+    $user = User::factory()->funded('1000.00')->create();
+
+    $this->actingAs($user)->postJson('/api/orders', [
+        'symbol' => 'BTC',
+        'side' => 'sell',
+        'price' => '95000.00',
+        'amount' => '0.01000000',
+    ], ['Idempotency-Key' => 'no-assets'])
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors('asset_balance');
+
+    expect(Order::query()->count())->toBe(0)
+        ->and(Asset::query()->count())->toBe(0)
+        ->and($user->refresh()->balance)->toBe('1000.00');
+});
+
+test('a sell order for exactly the available amount is accepted', function () {
+    $user = User::factory()->funded('1000.00')->create();
+    Asset::factory()->for($user)->create(['symbol' => Symbol::Btc, 'amount' => '0.01000000']);
+
+    $this->actingAs($user)->postJson('/api/orders', [
+        'symbol' => 'BTC',
+        'side' => 'sell',
+        'price' => '95000.00',
+        'amount' => '0.01000000',
+    ], ['Idempotency-Key' => 'exact-assets'])->assertCreated();
+
+    $asset = Asset::query()->where('user_id', $user->id)->where('symbol', Symbol::Btc)->sole();
+
+    expect($asset->amount)->toBe('0.00000000')
+        ->and($asset->locked_amount)->toBe('0.01000000');
+});
+
+test('retrying a sell with the same idempotency key returns the original order', function () {
+    $user = User::factory()->funded('1000.00')->create();
+    Asset::factory()->for($user)->create(['symbol' => Symbol::Btc, 'amount' => '0.50000000']);
+
+    $payload = [
+        'symbol' => 'BTC',
+        'side' => 'sell',
+        'price' => '95000.00',
+        'amount' => '0.01000000',
+    ];
+    $headers = ['Idempotency-Key' => 'sell-retry'];
+
+    $first = $this->actingAs($user)->postJson('/api/orders', $payload, $headers);
+    $second = $this->actingAs($user)->postJson('/api/orders', $payload, $headers);
+
+    $first->assertCreated();
+    $second->assertCreated()->assertJsonPath('data.id', $first->json('data.id'));
+
+    $asset = Asset::query()->where('user_id', $user->id)->where('symbol', Symbol::Btc)->sole();
+
+    expect(Order::query()->count())->toBe(1)
+        ->and($asset->amount)->toBe('0.49000000')
+        ->and($asset->locked_amount)->toBe('0.01000000');
+});
+
+test('reusing an idempotency key with different sell details is rejected', function () {
+    $user = User::factory()->funded('1000.00')->create();
+    Asset::factory()->for($user)->create(['symbol' => Symbol::Btc, 'amount' => '0.50000000']);
+
+    $this->actingAs($user)->postJson('/api/orders', [
+        'symbol' => 'BTC',
+        'side' => 'sell',
+        'price' => '95000.00',
+        'amount' => '0.01000000',
+    ], ['Idempotency-Key' => 'sell-reused'])->assertCreated();
+
+    $this->actingAs($user)->postJson('/api/orders', [
+        'symbol' => 'BTC',
+        'side' => 'sell',
+        'price' => '96000.00',
+        'amount' => '0.02000000',
+    ], ['Idempotency-Key' => 'sell-reused'])->assertStatus(409);
+
+    $asset = Asset::query()->where('user_id', $user->id)->where('symbol', Symbol::Btc)->sole();
+
+    expect(Order::query()->count())->toBe(1)
+        ->and($asset->amount)->toBe('0.49000000')
+        ->and($asset->locked_amount)->toBe('0.01000000');
 });
