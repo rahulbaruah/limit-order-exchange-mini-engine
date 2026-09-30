@@ -31,4 +31,26 @@ class OrderRepository
             ->where('idempotency_key', $idempotencyKey)
             ->first();
     }
+
+    /**
+     * Retrieve an order owned by the user with a write lock for the duration of the transaction.
+     */
+    public function findOwnedForUpdate(int $orderId, int $userId): ?Order
+    {
+        return Order::query()
+            ->whereKey($orderId)
+            ->where('user_id', $userId)
+            ->lockForUpdate()
+            ->first();
+    }
+
+    /**
+     * Persist the order's status.
+     */
+    public function updateStatus(Order $order, OrderStatus $status): void
+    {
+        $order->forceFill([
+            'status' => $status->value,
+        ])->save();
+    }
 }

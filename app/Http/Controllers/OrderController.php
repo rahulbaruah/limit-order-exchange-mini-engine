@@ -4,11 +4,14 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers;
 
+use App\Actions\Orders\CancelOrder;
 use App\Actions\Orders\CreateOrder;
+use App\DTOs\CancelOrderData;
 use App\DTOs\CreateOrderData;
 use App\Http\Requests\CreateOrderRequest;
 use App\Http\Resources\OrderResource;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 
 class OrderController extends Controller
 {
@@ -20,5 +23,15 @@ class OrderController extends Controller
         $order = $action->handle(CreateOrderData::fromRequest($request));
 
         return OrderResource::make($order)->response()->setStatusCode(201);
+    }
+
+    /**
+     * Cancel an open order owned by the authenticated user.
+     */
+    public function cancel(Request $request, CancelOrder $action): JsonResponse
+    {
+        $order = $action->handle(CancelOrderData::fromRequest($request));
+
+        return OrderResource::make($order)->response();
     }
 }

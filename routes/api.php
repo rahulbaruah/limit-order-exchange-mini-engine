@@ -12,4 +12,7 @@ Route::middleware('auth:sanctum')->group(function () {
     });
 
     Route::post('/orders', [OrderController::class, 'store'])->name('orders.store');
+    Route::post('/orders/{order}/cancel', [OrderController::class, 'cancel'])
+        ->whereNumber('order')
+        ->name('orders.cancel');
 });
