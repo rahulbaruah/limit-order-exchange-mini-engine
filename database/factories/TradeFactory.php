@@ -26,7 +26,7 @@ class TradeFactory extends Factory
             'buyer_id' => User::factory(),
             'seller_id' => User::factory(),
             'symbol' => Symbol::Btc,
-            'price' => '95000.00000000',
+            'price' => '95000.00',
             'amount' => '0.01000000',
             'gross_amount' => '950.00',
             'fee' => '14.25',

@@ -49,7 +49,7 @@ class Trade extends Model
     {
         return [
             'symbol' => Symbol::class,
-            'price' => 'decimal:8',
+            'price' => 'decimal:2',
             'amount' => 'decimal:8',
             'gross_amount' => 'decimal:2',
             'fee' => 'decimal:2',

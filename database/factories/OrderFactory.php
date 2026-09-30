@@ -25,7 +25,7 @@ class OrderFactory extends Factory
             'user_id' => User::factory(),
             'symbol' => Symbol::Btc,
             'side' => OrderSide::Buy,
-            'price' => '95000.00000000',
+            'price' => '95000.00',
             'amount' => '0.01000000',
             'status' => OrderStatus::Open,
         ];

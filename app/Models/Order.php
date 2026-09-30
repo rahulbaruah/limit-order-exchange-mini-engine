@@ -44,7 +44,7 @@ class Order extends Model
         return [
             'symbol' => Symbol::class,
             'side' => OrderSide::class,
-            'price' => 'decimal:8',
+            'price' => 'decimal:2',
             'amount' => 'decimal:8',
             'status' => OrderStatus::class,
         ];

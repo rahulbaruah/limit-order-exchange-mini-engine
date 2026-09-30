@@ -52,7 +52,7 @@ it('casts order enums and decimal values', function () {
     $order = Order::factory()->create([
         'side' => OrderSide::Sell,
         'status' => OrderStatus::Open,
-        'price' => '95000.00000000',
+        'price' => '95000.00',
         'amount' => '0.01000000',
     ]);
 
@@ -61,7 +61,7 @@ it('casts order enums and decimal values', function () {
     expect($order->side)->toBe(OrderSide::Sell)
         ->and($order->status)->toBe(OrderStatus::Open)
         ->and($order->symbol)->toBe(Symbol::Btc)
-        ->and($order->price)->toBe('95000.00000000')
+        ->and($order->price)->toBe('95000.00')
         ->and($order->amount)->toBe('0.01000000');
 });
 

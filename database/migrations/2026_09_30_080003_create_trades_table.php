@@ -18,7 +18,7 @@ return new class extends Migration
             $table->foreignId('buyer_id')->constrained('users')->cascadeOnDelete();
             $table->foreignId('seller_id')->constrained('users')->cascadeOnDelete();
             $table->string('symbol', 10);
-            $table->decimal('price', 20, 8);
+            $table->decimal('price', 20, 2);
             $table->decimal('amount', 20, 8);
             $table->decimal('gross_amount', 20, 2);
             $table->decimal('fee', 20, 2);
