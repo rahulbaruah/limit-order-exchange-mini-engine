@@ -20,4 +20,15 @@ class OrderRepository
             'status' => $status->value,
         ]);
     }
+
+    /**
+     * Find a user's order by the idempotency key it was created with.
+     */
+    public function findByIdempotencyKey(int $userId, string $idempotencyKey): ?Order
+    {
+        return Order::query()
+            ->where('user_id', $userId)
+            ->where('idempotency_key', $idempotencyKey)
+            ->first();
+    }
 }

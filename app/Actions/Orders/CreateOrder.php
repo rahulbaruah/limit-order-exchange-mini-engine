@@ -48,6 +48,17 @@ class CreateOrder
 
         return DB::transaction(function () use ($data, $notional, $required): Order {
             $user = $this->userRepository->lockById($data->userId);
+
+            $existing = $this->orderRepository->findByIdempotencyKey($data->userId, $data->idempotencyKey);
+
+            if ($existing !== null) {
+                if (! $this->matchesRequest($existing, $data)) {
+                    abort(409, __('This idempotency key has already been used with different order details.'));
+                }
+
+                return $existing;
+            }
+
             $balance = BigDecimal::of($user->balance);
 
             if ($balance->isLessThan($required)) {
@@ -67,5 +78,19 @@ class CreateOrder
 
             return $this->orderRepository->create($data, OrderStatus::Open);
         });
+    }
+
+    /**
+     * Determine whether a persisted order matches the requested order details.
+     *
+     * Decimal values are compared by value so formatting differences (for
+     * example "95000.0" versus the stored "95000.00") still count as a match.
+     */
+    private function matchesRequest(Order $order, CreateOrderData $data): bool
+    {
+        return $order->symbol === $data->symbol
+            && $order->side === $data->side
+            && BigDecimal::of($order->price)->isEqualTo($data->price)
+            && BigDecimal::of($order->amount)->isEqualTo($data->amount);
     }
 }

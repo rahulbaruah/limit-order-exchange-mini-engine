@@ -16,6 +16,7 @@ final readonly class CreateOrderData
         public OrderSide $side,
         public string $price,
         public string $amount,
+        public string $idempotencyKey,
     ) {}
 
     /**
@@ -31,13 +32,14 @@ final readonly class CreateOrderData
             side: OrderSide::from((string) $validated['side']),
             price: self::normaliseNumericInput($validated['price'], 2),
             amount: self::normaliseNumericInput($validated['amount'], 8),
+            idempotencyKey: (string) $validated['idempotency_key'],
         );
     }
 
     /**
      * Map the DTO to order model attributes.
      *
-     * @return array{user_id: int, symbol: string, side: string, price: string, amount: string}
+     * @return array{user_id: int, symbol: string, side: string, price: string, amount: string, idempotency_key: string}
      */
     public function toArray(): array
     {
@@ -47,6 +49,7 @@ final readonly class CreateOrderData
             'side' => $this->side->value,
             'price' => $this->price,
             'amount' => $this->amount,
+            'idempotency_key' => $this->idempotencyKey,
         ];
     }
 

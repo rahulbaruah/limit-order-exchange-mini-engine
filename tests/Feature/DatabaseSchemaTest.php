@@ -67,6 +67,26 @@ it('casts order enums and decimal values', function () {
         ->and($order->amount)->toBe('0.01000000');
 });
 
+it('stores an idempotency key on orders', function () {
+    expect(Schema::hasColumn('orders', 'idempotency_key'))->toBeTrue();
+});
+
+it('allows only one order per user and idempotency key', function () {
+    $user = User::factory()->create();
+
+    Order::factory()->for($user)->create(['idempotency_key' => 'duplicate-key']);
+
+    expect(fn () => Order::factory()->for($user)->create(['idempotency_key' => 'duplicate-key']))
+        ->toThrow(QueryException::class);
+});
+
+it('allows the same idempotency key for different users', function () {
+    Order::factory()->create(['idempotency_key' => 'shared-key']);
+    Order::factory()->create(['idempotency_key' => 'shared-key']);
+
+    expect(Order::where('idempotency_key', 'shared-key')->count())->toBe(2);
+});
+
 it('records a trade with only a created_at timestamp', function () {
     $trade = Trade::factory()->create();
 

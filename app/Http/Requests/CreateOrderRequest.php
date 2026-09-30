@@ -21,6 +21,16 @@ class CreateOrderRequest extends FormRequest
     }
 
     /**
+     * Prepare the data for validation.
+     */
+    protected function prepareForValidation(): void
+    {
+        $this->merge([
+            'idempotency_key' => $this->header('Idempotency-Key'),
+        ]);
+    }
+
+    /**
      * Get the validation rules that apply to the request.
      *
      * @return array<string, ValidationRule|array<mixed>|string>
@@ -28,6 +38,7 @@ class CreateOrderRequest extends FormRequest
     public function rules(): array
     {
         return [
+            'idempotency_key' => ['required', 'string', 'max:255'],
             'symbol' => ['required', Rule::enum(Symbol::class)],
             'side' => ['required', Rule::enum(OrderSide::class)->only(OrderSide::Buy)],
             'price' => ['required', 'numeric', 'gt:0', 'decimal:0,2'],

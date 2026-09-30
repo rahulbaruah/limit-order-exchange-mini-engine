@@ -24,13 +24,14 @@ use Illuminate\Support\Carbon;
  * @property string $price
  * @property string $amount
  * @property OrderStatus $status
+ * @property string|null $idempotency_key
  * @property Carbon|null $created_at
  * @property Carbon|null $updated_at
  * @property-read User $user
  * @property-read Collection<int, Trade> $buyTrades
  * @property-read Collection<int, Trade> $sellTrades
  */
-#[Fillable(['user_id', 'symbol', 'side', 'price', 'amount', 'status'])]
+#[Fillable(['user_id', 'symbol', 'side', 'price', 'amount', 'status', 'idempotency_key'])]
 class Order extends Model
 {
     /** @use HasFactory<OrderFactory> */

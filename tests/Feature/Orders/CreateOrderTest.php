@@ -25,7 +25,7 @@ test('an authenticated user can place an open buy order', function () {
         'side' => 'buy',
         'price' => '95000.00',
         'amount' => '0.01000000',
-    ]);
+    ], ['Idempotency-Key' => 'order-created']);
 
     $response->assertCreated()
         ->assertJsonPath('data.symbol', 'BTC')
@@ -51,7 +51,7 @@ test('eth buy orders are accepted', function () {
         'side' => 'buy',
         'price' => '3000.00',
         'amount' => '1.50000000',
-    ])->assertCreated()->assertJsonPath('data.symbol', 'ETH');
+    ], ['Idempotency-Key' => 'eth-order'])->assertCreated()->assertJsonPath('data.symbol', 'ETH');
 });
 
 test('the notional is reserved and the fee is deducted upfront', function () {
@@ -63,7 +63,7 @@ test('the notional is reserved and the fee is deducted upfront', function () {
         'side' => 'buy',
         'price' => '95000.00',
         'amount' => '0.01000000',
-    ])->assertCreated();
+    ], ['Idempotency-Key' => 'notional-reserved'])->assertCreated();
 
     $user->refresh();
 
@@ -81,7 +81,7 @@ test('fractional cents are rounded up for both the notional and the fee', functi
         'side' => 'buy',
         'price' => '100.01',
         'amount' => '0.33333333',
-    ])->assertCreated();
+    ], ['Idempotency-Key' => 'fractional-cents'])->assertCreated();
 
     $user->refresh();
 
@@ -98,7 +98,7 @@ test('insufficient funds including the fee leave balances and orders unchanged',
         'side' => 'buy',
         'price' => '95000.00',
         'amount' => '0.01000000',
-    ])->assertUnprocessable()->assertJsonValidationErrors('balance');
+    ], ['Idempotency-Key' => 'insufficient-funds'])->assertUnprocessable()->assertJsonValidationErrors('balance');
 
     $user->refresh();
 
@@ -115,7 +115,7 @@ test('a balance of exactly the notional plus fee is accepted', function () {
         'side' => 'buy',
         'price' => '95000.00',
         'amount' => '0.01000000',
-    ])->assertCreated();
+    ], ['Idempotency-Key' => 'exact-balance'])->assertCreated();
 
     $user->refresh();
 
@@ -126,7 +126,7 @@ test('a balance of exactly the notional plus fee is accepted', function () {
 test('invalid orders are rejected without changing balances', function (array $payload) {
     $user = User::factory()->funded('100000.00')->create();
 
-    $this->actingAs($user)->postJson('/api/orders', $payload)->assertUnprocessable();
+    $this->actingAs($user)->postJson('/api/orders', $payload, ['Idempotency-Key' => 'invalid-order'])->assertUnprocessable();
 
     $user->refresh();
 
@@ -177,3 +177,147 @@ test('invalid orders are rejected without changing balances', function (array $p
         'amount' => '0.01000000',
     ]],
 ]);
+
+test('a missing idempotency key is rejected', function () {
+    $user = User::factory()->funded('100000.00')->create();
+
+    $this->actingAs($user)->postJson('/api/orders', [
+        'symbol' => 'BTC',
+        'side' => 'buy',
+        'price' => '95000.00',
+        'amount' => '0.01000000',
+    ])->assertUnprocessable()->assertJsonValidationErrors('idempotency_key');
+
+    expect(Order::query()->count())->toBe(0);
+});
+
+test('an idempotency key longer than 255 characters is rejected', function () {
+    $user = User::factory()->funded('100000.00')->create();
+
+    $this->actingAs($user)->postJson('/api/orders', [
+        'symbol' => 'BTC',
+        'side' => 'buy',
+        'price' => '95000.00',
+        'amount' => '0.01000000',
+    ], ['Idempotency-Key' => str_repeat('a', 256)])
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors('idempotency_key');
+
+    expect(Order::query()->count())->toBe(0);
+});
+
+test('retrying with the same idempotency key returns the original order', function () {
+    $user = User::factory()->funded('100000.00')->create();
+
+    $payload = [
+        'symbol' => 'BTC',
+        'side' => 'buy',
+        'price' => '95000.00',
+        'amount' => '0.01000000',
+    ];
+    $headers = ['Idempotency-Key' => 'retry-key'];
+
+    $first = $this->actingAs($user)->postJson('/api/orders', $payload, $headers);
+    $second = $this->actingAs($user)->postJson('/api/orders', $payload, $headers);
+
+    $first->assertCreated();
+    $second->assertCreated()->assertJsonPath('data.id', $first->json('data.id'));
+
+    $user->refresh();
+
+    expect(Order::query()->count())->toBe(1)
+        ->and($user->balance)->toBe('99035.75')
+        ->and($user->locked_balance)->toBe('950.00');
+});
+
+test('a retry with equivalent decimal formatting is treated as a duplicate', function () {
+    $user = User::factory()->funded('100000.00')->create();
+
+    $first = $this->actingAs($user)->postJson('/api/orders', [
+        'symbol' => 'BTC',
+        'side' => 'buy',
+        'price' => '95000.00',
+        'amount' => '0.01000000',
+    ], ['Idempotency-Key' => 'format-key'])->assertCreated();
+
+    $this->actingAs($user)->postJson('/api/orders', [
+        'symbol' => 'BTC',
+        'side' => 'buy',
+        'price' => '95000.0',
+        'amount' => '0.0100000',
+    ], ['Idempotency-Key' => 'format-key'])
+        ->assertCreated()
+        ->assertJsonPath('data.id', $first->json('data.id'));
+
+    expect(Order::query()->count())->toBe(1);
+});
+
+test('reusing an idempotency key with different details is rejected', function () {
+    $user = User::factory()->funded('100000.00')->create();
+
+    $this->actingAs($user)->postJson('/api/orders', [
+        'symbol' => 'BTC',
+        'side' => 'buy',
+        'price' => '95000.00',
+        'amount' => '0.01000000',
+    ], ['Idempotency-Key' => 'reused-key'])->assertCreated();
+
+    $user->refresh();
+    $balanceAfterFirst = $user->balance;
+    $lockedAfterFirst = $user->locked_balance;
+
+    $this->actingAs($user)->postJson('/api/orders', [
+        'symbol' => 'BTC',
+        'side' => 'buy',
+        'price' => '96000.00',
+        'amount' => '0.01000000',
+    ], ['Idempotency-Key' => 'reused-key'])->assertStatus(409);
+
+    $user->refresh();
+
+    expect(Order::query()->count())->toBe(1)
+        ->and($user->balance)->toBe($balanceAfterFirst)
+        ->and($user->locked_balance)->toBe($lockedAfterFirst);
+});
+
+test('the same idempotency key can be used by different users', function () {
+    $payload = [
+        'symbol' => 'BTC',
+        'side' => 'buy',
+        'price' => '95000.00',
+        'amount' => '0.01000000',
+    ];
+    $headers = ['Idempotency-Key' => 'shared-key'];
+
+    $first = User::factory()->funded('100000.00')->create();
+    $second = User::factory()->funded('100000.00')->create();
+
+    $this->actingAs($first)->postJson('/api/orders', $payload, $headers)->assertCreated();
+    $this->actingAs($second)->postJson('/api/orders', $payload, $headers)->assertCreated();
+
+    expect(Order::query()->count())->toBe(2);
+});
+
+test('an unsuccessful order does not consume the idempotency key', function () {
+    $user = User::factory()->funded('100.00')->create();
+
+    // 950.00 notional plus the fee exceeds the balance, so no order is created.
+    $this->actingAs($user)->postJson('/api/orders', [
+        'symbol' => 'BTC',
+        'side' => 'buy',
+        'price' => '95000.00',
+        'amount' => '0.01000000',
+    ], ['Idempotency-Key' => 'unconsumed-key'])->assertUnprocessable();
+
+    expect(Order::query()->count())->toBe(0);
+
+    // The same key is free to be used once an affordable order is submitted.
+    $this->actingAs($user)->postJson('/api/orders', [
+        'symbol' => 'BTC',
+        'side' => 'buy',
+        'price' => '10.00',
+        'amount' => '1.00000000',
+    ], ['Idempotency-Key' => 'unconsumed-key'])->assertCreated();
+
+    expect(Order::query()->count())->toBe(1);
+});
