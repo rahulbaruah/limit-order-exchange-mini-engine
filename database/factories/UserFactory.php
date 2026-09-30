@@ -44,6 +44,16 @@ class UserFactory extends Factory
     }
 
     /**
+     * Indicate that the user has a funded USD balance.
+     */
+    public function funded(string $balance = '100000.00'): static
+    {
+        return $this->state(fn (array $attributes) => [
+            'balance' => $balance,
+        ]);
+    }
+
+    /**
      * Indicate that the model has two-factor authentication configured.
      */
     public function withTwoFactor(): static {}
