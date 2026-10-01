@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Repositories;
 
 use App\DTOs\CreateOrderData;
+use App\Enums\OrderSide;
 use App\Enums\OrderStatus;
 use App\Enums\Symbol;
 use App\Models\Order;
@@ -42,6 +43,32 @@ class OrderRepository
         return Order::query()
             ->whereKey($orderId)
             ->where('user_id', $userId)
+            ->lockForUpdate()
+            ->first();
+    }
+
+    /**
+     * Find the best open counter-order that fully matches the given order, locked for the transaction.
+     *
+     * Only exact-amount matches on the opposite side qualify, and a user never
+     * trades with themselves. Candidates are ranked by price-time priority: the
+     * cheapest sell (or the highest-paying buy), then the earliest placed.
+     */
+    public function findMatchableCounterOrderForUpdate(Order $order): ?Order
+    {
+        $isBuy = $order->side === OrderSide::Buy;
+
+        return Order::query()
+            ->where('symbol', $order->symbol->value)
+            ->where('side', $isBuy ? OrderSide::Sell->value : OrderSide::Buy->value)
+            ->where('status', OrderStatus::Open->value)
+            ->whereKeyNot($order->id)
+            ->where('user_id', '!=', $order->user_id)
+            ->where('amount', $order->amount)
+            ->where('price', $isBuy ? '<=' : '>=', $order->price)
+            ->orderBy('price', $isBuy ? 'asc' : 'desc')
+            ->orderBy('created_at')
+            ->orderBy('id')
             ->lockForUpdate()
             ->first();
     }

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Actions\Orders;
 
+use App\Concerns\CalculatesOrderAmounts;
 use App\DTOs\CancelOrderData;
 use App\Enums\OrderSide;
 use App\Enums\OrderStatus;
@@ -13,26 +14,12 @@ use App\Repositories\AssetRepository;
 use App\Repositories\OrderRepository;
 use App\Repositories\UserRepository;
 use Brick\Math\BigDecimal;
-use Brick\Math\RoundingMode;
 use Illuminate\Http\Exceptions\HttpResponseException;
 use Illuminate\Support\Facades\DB;
 
 class CancelOrder
 {
-    /**
-     * USD amounts are stored with two decimal places.
-     */
-    private const int UsdScale = 2;
-
-    /**
-     * Asset amounts are stored with eight decimal places.
-     */
-    private const int AssetScale = 8;
-
-    /**
-     * Fee rate charged on the order notional.
-     */
-    private const string FeeRate = '0.015';
+    use CalculatesOrderAmounts;
 
     public function __construct(
         private readonly UserRepository $userRepository,
@@ -80,12 +67,8 @@ class CancelOrder
      */
     private function releaseBuyReservation(User $user, Order $order): void
     {
-        $rawNotional = BigDecimal::of($order->price)->multipliedBy($order->amount);
-
-        $notional = $rawNotional->toScale(self::UsdScale, RoundingMode::Ceiling);
-        $fee = $rawNotional
-            ->multipliedBy(self::FeeRate)
-            ->toScale(self::UsdScale, RoundingMode::Ceiling);
+        $notional = $this->notionalFor($order->price, $order->amount);
+        $fee = $this->feeFor($order->price, $order->amount);
 
         $this->userRepository->updateBalances(
             $user,

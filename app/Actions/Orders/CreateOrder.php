@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Actions\Orders;
 
+use App\Concerns\CalculatesOrderAmounts;
 use App\DTOs\CreateOrderData;
 use App\Enums\OrderSide;
 use App\Enums\OrderStatus;
@@ -12,40 +13,29 @@ use App\Models\User;
 use App\Repositories\AssetRepository;
 use App\Repositories\OrderRepository;
 use App\Repositories\UserRepository;
+use App\Services\OrderMatchingService;
 use Brick\Math\BigDecimal;
-use Brick\Math\RoundingMode;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
 class CreateOrder
 {
-    /**
-     * USD amounts are stored with two decimal places.
-     */
-    private const int UsdScale = 2;
-
-    /**
-     * Asset amounts are stored with eight decimal places.
-     */
-    private const int AssetScale = 8;
-
-    /**
-     * Fee rate charged on the order notional.
-     */
-    private const string FeeRate = '0.015';
+    use CalculatesOrderAmounts;
 
     public function __construct(
         private readonly UserRepository $userRepository,
         private readonly OrderRepository $orderRepository,
         private readonly AssetRepository $assetRepository,
+        private readonly OrderMatchingService $matchingService,
     ) {}
 
     /**
-     * Create an open limit order, reserving the funds or assets it commits.
+     * Create an open limit order, reserving the funds or assets it commits, then match it.
      *
      * A buy reserves the notional plus the upfront fee from the USD balance; a
      * sell moves the ordered amount from the available asset balance into the
-     * asset's locked amount.
+     * asset's locked amount. The order is then offered to the matching engine
+     * and comes back filled when a compatible counter-order existed.
      *
      * @throws ValidationException When the available balance or assets cannot cover the order.
      */
@@ -64,10 +54,14 @@ class CreateOrder
                 return $existing;
             }
 
-            return match ($data->side) {
+            $order = match ($data->side) {
                 OrderSide::Buy => $this->createBuyOrder($user, $data),
                 OrderSide::Sell => $this->createSellOrder($data),
             };
+
+            $this->matchingService->match($order);
+
+            return $order;
         });
     }
 
@@ -78,12 +72,8 @@ class CreateOrder
      */
     private function createBuyOrder(User $user, CreateOrderData $data): Order
     {
-        $rawNotional = BigDecimal::of($data->price)->multipliedBy($data->amount);
-
-        $notional = $rawNotional->toScale(self::UsdScale, RoundingMode::Ceiling);
-        $fee = $rawNotional
-            ->multipliedBy(self::FeeRate)
-            ->toScale(self::UsdScale, RoundingMode::Ceiling);
+        $notional = $this->notionalFor($data->price, $data->amount);
+        $fee = $this->feeFor($data->price, $data->amount);
         $required = $notional->plus($fee);
 
         $balance = BigDecimal::of($user->balance);
