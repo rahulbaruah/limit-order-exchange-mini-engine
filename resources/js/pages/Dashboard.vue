@@ -1,6 +1,8 @@
 <script setup lang="ts">
-import { Head } from '@inertiajs/vue3';
+import { Head, useHttp } from '@inertiajs/vue3';
+import { computed, onMounted, ref } from 'vue';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import {
     Card,
     CardContent,
@@ -8,7 +10,10 @@ import {
     CardHeader,
     CardTitle,
 } from '@/components/ui/card';
+import { Spinner } from '@/components/ui/spinner';
 import { dashboard } from '@/routes';
+import { index as ordersIndex } from '@/routes/orders';
+import { show as profileShow } from '@/routes/profile';
 
 defineOptions({
     layout: {
@@ -48,26 +53,142 @@ type OrderRow = {
     placedAt: string;
 };
 
-const walletBalances: WalletBalance[] = [
-    {
-        symbol: 'USD',
-        name: 'US Dollar',
-        available: '25,430.55',
-        locked: '1,425.00',
-    },
-    {
-        symbol: 'BTC',
-        name: 'Bitcoin',
-        available: '0.48215000',
-        locked: '0.01000000',
-    },
-    {
-        symbol: 'ETH',
-        name: 'Ethereum',
-        available: '3.20500000',
-        locked: '0.00000000',
-    },
-];
+type ProfileResponse = {
+    data: {
+        usd: {
+            balance: string;
+            locked_balance: string;
+        };
+        assets: {
+            symbol: string;
+            amount: string;
+            locked_amount: string;
+        }[];
+    };
+};
+
+type ApiOrder = {
+    id: number;
+    symbol: string;
+    side: 'buy' | 'sell';
+    price: string;
+    amount: string;
+    status: 'open' | 'filled' | 'cancelled';
+    created_at: string;
+};
+
+type OrdersResponse = {
+    data: ApiOrder[];
+};
+
+/** These standalone GET requests carry no request body. */
+type EmptyForm = Record<string, never>;
+
+const profileRequest = useHttp<EmptyForm, ProfileResponse>({});
+const btcOrdersRequest = useHttp<EmptyForm, OrdersResponse>({});
+const ethOrdersRequest = useHttp<EmptyForm, OrdersResponse>({});
+
+const isLoading = ref(true);
+const loadError = ref<string | null>(null);
+
+/** Load the authenticated user's balances and their BTC/ETH order history. */
+async function loadDashboard(): Promise<void> {
+    isLoading.value = true;
+    loadError.value = null;
+
+    try {
+        await Promise.all([
+            profileRequest.get(profileShow.url()),
+            btcOrdersRequest.get(ordersIndex.url({ query: { symbol: 'BTC' } })),
+            ethOrdersRequest.get(ordersIndex.url({ query: { symbol: 'ETH' } })),
+        ]);
+    } catch {
+        loadError.value =
+            'Unable to load your balances and orders. Please try again.';
+    } finally {
+        isLoading.value = false;
+    }
+}
+
+onMounted(loadDashboard);
+
+const walletSymbols = ['USD', 'BTC', 'ETH'] as const;
+
+type WalletSymbol = (typeof walletSymbols)[number];
+
+const assetMetadata: Record<WalletSymbol, { name: string; scale: number }> = {
+    USD: { name: 'US Dollar', scale: 2 },
+    BTC: { name: 'Bitcoin', scale: 8 },
+    ETH: { name: 'Ethereum', scale: 8 },
+};
+
+/**
+ * Group the integer part of a plain decimal string and pad its fraction to the
+ * given scale, so API decimal strings render consistently.
+ */
+function formatDecimal(value: string, scale: number): string {
+    const [whole = '0', fraction = ''] = value.split('.');
+    const grouped = whole.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+    const padded = fraction.padEnd(scale, '0').slice(0, scale);
+
+    return scale > 0 ? `${grouped}.${padded}` : grouped;
+}
+
+/**
+ * Build the wallet rows from the profile response, defaulting any asset the
+ * user has no balance for to zero so USD, BTC, and ETH always render.
+ */
+const walletBalances = computed<WalletBalance[]>(() => {
+    const profile = profileRequest.response;
+    const assetsBySymbol = new Map(
+        (profile?.data.assets ?? []).map((asset) => [asset.symbol, asset]),
+    );
+
+    return walletSymbols.map((symbol) => {
+        const { name, scale } = assetMetadata[symbol];
+        const available =
+            symbol === 'USD'
+                ? (profile?.data.usd.balance ?? '0')
+                : (assetsBySymbol.get(symbol)?.amount ?? '0');
+        const locked =
+            symbol === 'USD'
+                ? (profile?.data.usd.locked_balance ?? '0')
+                : (assetsBySymbol.get(symbol)?.locked_amount ?? '0');
+
+        return {
+            symbol,
+            name,
+            available: formatDecimal(available, scale),
+            locked: formatDecimal(locked, scale),
+        };
+    });
+});
+
+const sideLabels: Record<ApiOrder['side'], OrderSide> = {
+    buy: 'Buy',
+    sell: 'Sell',
+};
+
+const statusLabels: Record<ApiOrder['status'], OrderStatus> = {
+    open: 'Open',
+    filled: 'Filled',
+    cancelled: 'Cancelled',
+};
+
+/** Render an ISO-8601 timestamp as a compact local date and time. */
+function formatPlacedAt(value: string): string {
+    const placedAt = new Date(value);
+
+    if (Number.isNaN(placedAt.getTime())) {
+        return '—';
+    }
+
+    const pad = (part: number): string => part.toString().padStart(2, '0');
+
+    return `${placedAt.getFullYear()}-${pad(placedAt.getMonth() + 1)}-${pad(
+        placedAt.getDate(),
+    )} ${pad(placedAt.getHours())}:${pad(placedAt.getMinutes())}`;
+}
 
 const asks: BookLevel[] = [
     { price: '95,012.00', amount: '0.0412', total: '3,914.49' },
@@ -83,53 +204,31 @@ const bids: BookLevel[] = [
     { price: '94,958.75', amount: '0.2100', total: '19,941.34' },
 ];
 
-const orders: OrderRow[] = [
-    {
-        id: '#1042',
-        market: 'BTC/USD',
-        side: 'Buy',
-        price: '94,850.00',
-        amount: '0.01000000',
-        status: 'Open',
-        placedAt: '2026-10-01 09:12',
-    },
-    {
-        id: '#1041',
-        market: 'ETH/USD',
-        side: 'Sell',
-        price: '3,120.50',
-        amount: '0.50000000',
-        status: 'Open',
-        placedAt: '2026-09-30 18:04',
-    },
-    {
-        id: '#1040',
-        market: 'BTC/USD',
-        side: 'Buy',
-        price: '95,200.00',
-        amount: '0.02500000',
-        status: 'Filled',
-        placedAt: '2026-09-29 14:37',
-    },
-    {
-        id: '#1039',
-        market: 'ETH/USD',
-        side: 'Buy',
-        price: '3,050.00',
-        amount: '1.00000000',
-        status: 'Filled',
-        placedAt: '2026-09-28 11:20',
-    },
-    {
-        id: '#1038',
-        market: 'BTC/USD',
-        side: 'Sell',
-        price: '96,100.00',
-        amount: '0.01500000',
-        status: 'Cancelled',
-        placedAt: '2026-09-27 20:55',
-    },
-];
+/**
+ * Combine both markets' rows into one list, newest first to match the API
+ * ordering. The order id breaks ties for orders created together.
+ */
+const orders = computed<OrderRow[]>(() =>
+    [
+        ...(btcOrdersRequest.response?.data ?? []),
+        ...(ethOrdersRequest.response?.data ?? []),
+    ]
+        .sort((a, b) => {
+            const difference =
+                Date.parse(b.created_at) - Date.parse(a.created_at);
+
+            return difference !== 0 ? difference : b.id - a.id;
+        })
+        .map((order) => ({
+            id: `#${order.id}`,
+            market: `${order.symbol}`,
+            side: sideLabels[order.side],
+            price: formatDecimal(order.price, 2),
+            amount: formatDecimal(order.amount, 8),
+            status: statusLabels[order.status],
+            placedAt: formatPlacedAt(order.created_at),
+        })),
+);
 
 const statusVariants: Record<OrderStatus, 'default' | 'secondary' | 'outline'> =
     {
@@ -155,7 +254,14 @@ const statusVariants: Record<OrderStatus, 'default' | 'secondary' | 'outline'> =
                     activity.
                 </p>
             </div>
-            <Badge variant="outline">Sample data</Badge>
+            <Button
+                v-if="loadError"
+                variant="outline"
+                size="sm"
+                @click="loadDashboard"
+            >
+                Retry
+            </Button>
         </div>
 
         <section class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -163,6 +269,8 @@ const statusVariants: Record<OrderStatus, 'default' | 'secondary' | 'outline'> =
                 v-for="balance in walletBalances"
                 :key="balance.symbol"
                 class="gap-4 py-4"
+                :class="{ 'animate-pulse': isLoading }"
+                :aria-busy="isLoading"
             >
                 <CardHeader class="gap-1">
                     <CardDescription>{{ balance.name }}</CardDescription>
@@ -195,7 +303,10 @@ const statusVariants: Record<OrderStatus, 'default' | 'secondary' | 'outline'> =
                                 Resting buy and sell interest.
                             </CardDescription>
                         </div>
-                        <Badge variant="outline">BTC/USD</Badge>
+                        <div class="flex items-center gap-2">
+                            <Badge variant="outline">Sample data</Badge>
+                            <Badge variant="outline">BTC/USD</Badge>
+                        </div>
                     </div>
                 </CardHeader>
 
@@ -323,7 +434,22 @@ const statusVariants: Record<OrderStatus, 'default' | 'secondary' | 'outline'> =
 
                 <CardContent>
                     <div
-                        v-if="orders.length === 0"
+                        v-if="isLoading"
+                        class="flex items-center justify-center gap-2 rounded-lg border border-dashed p-8 text-sm text-muted-foreground"
+                    >
+                        <Spinner />
+                        Loading your orders…
+                    </div>
+
+                    <div
+                        v-else-if="loadError"
+                        class="rounded-lg border border-dashed border-destructive/40 p-8 text-center text-sm text-destructive"
+                    >
+                        {{ loadError }}
+                    </div>
+
+                    <div
+                        v-else-if="orders.length === 0"
                         class="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground"
                     >
                         You haven't placed any orders yet.

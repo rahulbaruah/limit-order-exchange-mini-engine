@@ -44,7 +44,24 @@ test('the authenticated users own buy orders are returned across every status', 
         ->toContain($cancelled->id);
 });
 
-test('sell orders matched against the users buys are returned', function () {
+test('the authenticated users own sell orders are returned across every status', function () {
+    $me = User::factory()->create();
+
+    $open = Order::factory()->for($me)->sell()->create();
+    $filled = Order::factory()->for($me)->sell()->filled()->create();
+    $cancelled = Order::factory()->for($me)->sell()->cancelled()->create();
+
+    $response = $this->actingAs($me)->getJson('/api/orders?symbol=BTC')
+        ->assertOk()
+        ->assertJsonCount(3, 'data');
+
+    expect($response->json('data.*.id'))
+        ->toContain($open->id)
+        ->toContain($filled->id)
+        ->toContain($cancelled->id);
+});
+
+test('a matched counterparty sell order is not returned', function () {
     $me = User::factory()->create();
     $seller = User::factory()->create();
 
@@ -60,37 +77,27 @@ test('sell orders matched against the users buys are returned', function () {
 
     $response = $this->actingAs($me)->getJson('/api/orders?symbol=BTC')
         ->assertOk()
-        ->assertJsonCount(2, 'data');
+        ->assertJsonCount(1, 'data');
 
-    expect($response->json('data.*.id'))->toContain($buy->id)->toContain($sell->id);
+    expect($response->json('data.*.id'))->toBe([$buy->id]);
 });
 
-test('orders unrelated to the authenticated user are excluded', function () {
+test('orders owned by other users are excluded', function () {
     $me = User::factory()->create();
     $other = User::factory()->create();
-    $anotherBuyer = User::factory()->create();
 
     $myBuy = Order::factory()->for($me)->buy()->create();
+    $mySell = Order::factory()->for($me)->sell()->create();
 
-    // My own sell order, not matched against one of my buys.
-    Order::factory()->for($me)->sell()->create();
-
-    // Another user's buy order.
     Order::factory()->for($other)->buy()->create();
-
-    // A sell order matched to a different buyer.
-    $otherBuy = Order::factory()->for($other)->buy()->create();
-    $otherSell = Order::factory()->for($me)->sell()->create();
-    Trade::factory()->create([
-        'buy_order_id' => $otherBuy->id,
-        'sell_order_id' => $otherSell->id,
-        'buyer_id' => $anotherBuyer->id,
-        'seller_id' => $me->id,
-    ]);
+    Order::factory()->for($other)->sell()->create();
 
     $response = $this->actingAs($me)->getJson('/api/orders?symbol=BTC')->assertOk();
 
-    expect($response->json('data.*.id'))->toBe([$myBuy->id]);
+    expect($response->json('data.*.id'))
+        ->toHaveCount(2)
+        ->toContain($myBuy->id)
+        ->toContain($mySell->id);
 });
 
 test('orders for other symbols are excluded', function () {
@@ -134,4 +141,14 @@ test('an empty list is returned when the user has no relevant orders', function 
     $this->actingAs($me)->getJson('/api/orders?symbol=BTC')
         ->assertOk()
         ->assertJsonCount(0, 'data');
+});
+
+test('the order creation timestamp is exposed as an ISO-8601 string', function () {
+    $me = User::factory()->create();
+    $order = Order::factory()->for($me)->buy()->create();
+
+    $response = $this->actingAs($me)->getJson('/api/orders?symbol=BTC')->assertOk();
+
+    expect($response->json('data.0.created_at'))
+        ->toBe($order->created_at?->toIso8601String());
 });

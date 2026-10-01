@@ -27,6 +27,7 @@ class OrderResource extends JsonResource
             'price' => $this->price,
             'amount' => $this->amount,
             'status' => $this->status->value,
+            'created_at' => $this->created_at?->toIso8601String(),
         ];
     }
 }

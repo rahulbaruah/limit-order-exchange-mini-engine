@@ -5,11 +5,9 @@ declare(strict_types=1);
 namespace App\Repositories;
 
 use App\DTOs\CreateOrderData;
-use App\Enums\OrderSide;
 use App\Enums\OrderStatus;
 use App\Enums\Symbol;
 use App\Models\Order;
-use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Collection;
 
 class OrderRepository
@@ -49,29 +47,19 @@ class OrderRepository
     }
 
     /**
-     * Retrieve the orders a user is involved in for a symbol.
+     * Retrieve every order the user placed for a symbol.
      *
-     * Includes the user's own buy orders and the sell orders that were matched
-     * against those buys, across every order status. Other users' unrelated
-     * orders are excluded.
+     * Includes the user's own buy and sell orders across every order status.
+     * Other users' orders, including sells matched against the user's buys,
+     * are excluded.
      *
      * @return Collection<int, Order>
      */
     public function visibleForUser(int $userId, Symbol $symbol): Collection
     {
         return Order::query()
+            ->where('user_id', $userId)
             ->where('symbol', $symbol->value)
-            ->where(function (Builder $query) use ($userId): void {
-                $query
-                    ->where(function (Builder $query) use ($userId): void {
-                        $query->where('user_id', $userId)
-                            ->where('side', OrderSide::Buy->value);
-                    })
-                    ->orWhere(function (Builder $query) use ($userId): void {
-                        $query->where('side', OrderSide::Sell->value)
-                            ->whereHas('sellTrades', fn (Builder $trade): Builder => $trade->where('buyer_id', $userId));
-                    });
-            })
             ->orderByDesc('created_at')
             ->orderByDesc('id')
             ->get();
