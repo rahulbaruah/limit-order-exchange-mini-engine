@@ -20,6 +20,14 @@ import {
     DialogHeader,
     DialogTitle,
 } from '@/components/ui/dialog';
+import { Label } from '@/components/ui/label';
+import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
+} from '@/components/ui/select';
 import { Spinner } from '@/components/ui/spinner';
 import type { RealtimeConnectionState } from '@/composables/useRealtimeSync';
 import { useRealtimeSync } from '@/composables/useRealtimeSync';
@@ -102,6 +110,10 @@ type ApiOrder = {
     created_at: string;
 };
 
+type OrderMarketFilter = 'all' | MarketSymbol;
+type OrderSideFilter = 'all' | ApiOrder['side'];
+type OrderStatusFilter = 'all' | ApiOrder['status'];
+
 type OrdersResponse = {
     data: ApiOrder[];
 };
@@ -117,10 +129,18 @@ const profileRequest = useHttp<EmptyForm, ProfileResponse>({});
 const btcOrdersRequest = useHttp<EmptyForm, OrdersResponse>({});
 const ethOrdersRequest = useHttp<EmptyForm, OrdersResponse>({});
 const orderBookRequest = useHttp<EmptyForm, OrderBookResponse>({});
+const btcOrders = ref<ApiOrder[]>([]);
+const ethOrders = ref<ApiOrder[]>([]);
 
 const selectedMarket = ref<MarketSymbol>('BTC');
+const orderMarketFilter = ref<OrderMarketFilter>('all');
+const orderSideFilter = ref<OrderSideFilter>('all');
+const orderStatusFilter = ref<OrderStatusFilter>('all');
 const orderBookLoading = ref(true);
 const orderBookError = ref<string | null>(null);
+const orderLoading = ref(true);
+const orderLoadError = ref<string | null>(null);
+let orderRequestVersion = 0;
 const orderBook = computed<OrderBookResponse['data']>(
     () =>
         orderBookRequest.response?.data ?? {
@@ -133,6 +153,60 @@ const orderBook = computed<OrderBookResponse['data']>(
 const isLoading = ref(true);
 const loadError = ref<string | null>(null);
 
+/** Fetch only the markets and order criteria currently selected. */
+async function loadOrders(background = false): Promise<void> {
+    const requestVersion = ++orderRequestVersion;
+    const symbols: MarketSymbol[] =
+        orderMarketFilter.value === 'all'
+            ? ['BTC', 'ETH']
+            : [orderMarketFilter.value];
+    const filters = {
+        ...(orderSideFilter.value === 'all'
+            ? {}
+            : { side: orderSideFilter.value }),
+        ...(orderStatusFilter.value === 'all'
+            ? {}
+            : { status: orderStatusFilter.value }),
+    };
+
+    btcOrdersRequest.cancel();
+    ethOrdersRequest.cancel();
+    orderLoading.value = !background;
+    orderLoadError.value = null;
+
+    try {
+        const results = await Promise.all(
+            symbols.map(async (symbol) => {
+                const request =
+                    symbol === 'BTC' ? btcOrdersRequest : ethOrdersRequest;
+                const response = await request.get(
+                    ordersIndex.url({ query: { symbol, ...filters } }),
+                );
+
+                return { symbol, orders: response.data };
+            }),
+        );
+
+        if (requestVersion !== orderRequestVersion) {
+            return;
+        }
+
+        btcOrders.value =
+            results.find((result) => result.symbol === 'BTC')?.orders ?? [];
+        ethOrders.value =
+            results.find((result) => result.symbol === 'ETH')?.orders ?? [];
+    } catch {
+        if (requestVersion === orderRequestVersion) {
+            orderLoadError.value =
+                'Unable to load your orders. Please try again.';
+        }
+    } finally {
+        if (requestVersion === orderRequestVersion) {
+            orderLoading.value = false;
+        }
+    }
+}
+
 /** Load the authenticated user's balances and their BTC/ETH order history. */
 async function loadDashboard(): Promise<void> {
     isLoading.value = true;
@@ -142,7 +216,7 @@ async function loadDashboard(): Promise<void> {
         await fetchDashboard();
     } catch {
         loadError.value =
-            'Unable to load your balances and orders. Please try again.';
+            'Unable to load your dashboard data. Please try again.';
     } finally {
         isLoading.value = false;
     }
@@ -158,17 +232,16 @@ async function loadOrderBook(): Promise<void> {
     try {
         await orderBookRequest.get(orderBookIndex.url({ query: { symbol } }));
     } catch {
-        orderBookError.value = `Unable to load the ${symbol}/USD order book. Please try again.`;
+        orderBookError.value = `Unable to load the ${symbol} order book. Please try again.`;
     } finally {
         orderBookLoading.value = false;
     }
 }
 
-function fetchDashboard(): Promise<unknown> {
+function fetchDashboard(background = false): Promise<unknown> {
     return Promise.all([
         profileRequest.get(profileShow.url()),
-        btcOrdersRequest.get(ordersIndex.url({ query: { symbol: 'BTC' } })),
-        ethOrdersRequest.get(ordersIndex.url({ query: { symbol: 'ETH' } })),
+        loadOrders(background),
         loadOrderBook(),
     ]);
 }
@@ -176,11 +249,11 @@ function fetchDashboard(): Promise<unknown> {
 /** Refetch in the background so a live update doesn't flash the loading state. */
 async function refreshDashboard(): Promise<void> {
     try {
-        await fetchDashboard();
+        await fetchDashboard(true);
         loadError.value = null;
     } catch {
         loadError.value =
-            'Unable to load your balances and orders. Please try again.';
+            'Unable to load your dashboard data. Please try again.';
     }
 }
 
@@ -188,6 +261,10 @@ onMounted(loadDashboard);
 
 watch(selectedMarket, () => {
     void loadOrderBook();
+});
+
+watch([orderMarketFilter, orderSideFilter, orderStatusFilter], () => {
+    void loadOrders();
 });
 
 const page = usePage();
@@ -292,10 +369,7 @@ function formatPlacedAt(value: string): string {
  * ordering. The order id breaks ties for orders created together.
  */
 const orders = computed<OrderRow[]>(() =>
-    [
-        ...(btcOrdersRequest.response?.data ?? []),
-        ...(ethOrdersRequest.response?.data ?? []),
-    ]
+    [...btcOrders.value, ...ethOrders.value]
         .sort((a, b) => {
             const difference =
                 Date.parse(b.created_at) - Date.parse(a.created_at);
@@ -313,6 +387,13 @@ const orders = computed<OrderRow[]>(() =>
             canCancel: order.status === 'open',
             placedAt: formatPlacedAt(order.created_at),
         })),
+);
+
+const hasOrderFilters = computed(
+    () =>
+        orderMarketFilter.value !== 'all' ||
+        orderSideFilter.value !== 'all' ||
+        orderStatusFilter.value !== 'all',
 );
 
 const cancelRequest = useHttp<EmptyForm, OrderResponse>({});
@@ -452,8 +533,8 @@ const statusVariants: Record<OrderStatus, 'default' | 'secondary' | 'outline'> =
                             aria-label="Order book market"
                             class="h-8 rounded-md border bg-background px-2 text-xs"
                         >
-                            <option value="BTC">BTC/USD</option>
-                            <option value="ETH">ETH/USD</option>
+                            <option value="BTC">BTC</option>
+                            <option value="ETH">ETH</option>
                         </select>
                     </div>
                 </CardHeader>
@@ -596,8 +677,10 @@ const statusVariants: Record<OrderStatus, 'default' | 'secondary' | 'outline'> =
             </Card>
 
             <Card class="lg:col-span-2">
-                <CardHeader>
-                    <div class="flex items-start justify-between gap-2">
+                <CardHeader class="gap-4">
+                    <div
+                        class="flex flex-wrap items-start justify-between gap-2"
+                    >
                         <div class="space-y-1">
                             <CardTitle>Your orders</CardTitle>
                             <CardDescription>
@@ -605,14 +688,79 @@ const statusVariants: Record<OrderStatus, 'default' | 'secondary' | 'outline'> =
                             </CardDescription>
                         </div>
                         <Badge variant="secondary">
-                            {{ orders.length }} orders
+                            {{ orders.length }}
+                            {{ orders.length === 1 ? 'order' : 'orders' }}
                         </Badge>
+                    </div>
+
+                    <div class="grid gap-3 sm:grid-cols-3">
+                        <div class="grid gap-2">
+                            <Label for="orders-market-filter">Market</Label>
+                            <Select v-model="orderMarketFilter">
+                                <SelectTrigger
+                                    id="orders-market-filter"
+                                    class="w-full"
+                                >
+                                    <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="all">
+                                        All markets
+                                    </SelectItem>
+                                    <SelectItem value="BTC">BTC</SelectItem>
+                                    <SelectItem value="ETH">ETH</SelectItem>
+                                </SelectContent>
+                            </Select>
+                        </div>
+
+                        <div class="grid gap-2">
+                            <Label for="orders-side-filter">Side</Label>
+                            <Select v-model="orderSideFilter">
+                                <SelectTrigger
+                                    id="orders-side-filter"
+                                    class="w-full"
+                                >
+                                    <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="all"
+                                        >All sides</SelectItem
+                                    >
+                                    <SelectItem value="buy">Buy</SelectItem>
+                                    <SelectItem value="sell">Sell</SelectItem>
+                                </SelectContent>
+                            </Select>
+                        </div>
+
+                        <div class="grid gap-2">
+                            <Label for="orders-status-filter">Status</Label>
+                            <Select v-model="orderStatusFilter">
+                                <SelectTrigger
+                                    id="orders-status-filter"
+                                    class="w-full"
+                                >
+                                    <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="all">
+                                        All statuses
+                                    </SelectItem>
+                                    <SelectItem value="open">Open</SelectItem>
+                                    <SelectItem value="filled">
+                                        Filled
+                                    </SelectItem>
+                                    <SelectItem value="cancelled">
+                                        Cancelled
+                                    </SelectItem>
+                                </SelectContent>
+                            </Select>
+                        </div>
                     </div>
                 </CardHeader>
 
                 <CardContent>
                     <div
-                        v-if="isLoading"
+                        v-if="isLoading || orderLoading"
                         class="flex items-center justify-center gap-2 rounded-lg border border-dashed p-8 text-sm text-muted-foreground"
                     >
                         <Spinner />
@@ -624,6 +772,27 @@ const statusVariants: Record<OrderStatus, 'default' | 'secondary' | 'outline'> =
                         class="rounded-lg border border-dashed border-destructive/40 p-8 text-center text-sm text-destructive"
                     >
                         {{ loadError }}
+                    </div>
+
+                    <div
+                        v-else-if="orderLoadError"
+                        class="flex flex-col items-center gap-3 rounded-lg border border-dashed border-destructive/40 p-8 text-center text-sm text-destructive"
+                    >
+                        {{ orderLoadError }}
+                        <Button
+                            variant="outline"
+                            size="sm"
+                            @click="loadOrders()"
+                        >
+                            Retry
+                        </Button>
+                    </div>
+
+                    <div
+                        v-else-if="orders.length === 0 && hasOrderFilters"
+                        class="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground"
+                    >
+                        No orders match these filters.
                     </div>
 
                     <div

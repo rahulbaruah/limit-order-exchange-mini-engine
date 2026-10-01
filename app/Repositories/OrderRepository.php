@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Repositories;
 
 use App\DTOs\CreateOrderData;
+use App\DTOs\ListOrdersData;
 use App\DTOs\OrderBookOrderData;
 use App\Enums\OrderSide;
 use App\Enums\OrderStatus;
@@ -97,11 +98,21 @@ class OrderRepository
      *
      * @return Collection<int, Order>
      */
-    public function visibleForUser(int $userId, Symbol $symbol): Collection
+    public function visibleForUser(int $userId, ListOrdersData $filters): Collection
     {
-        return Order::query()
+        $query = Order::query()
             ->where('user_id', $userId)
-            ->where('symbol', $symbol->value)
+            ->where('symbol', $filters->symbol->value);
+
+        if ($filters->side !== null) {
+            $query->where('side', $filters->side->value);
+        }
+
+        if ($filters->status !== null) {
+            $query->where('status', $filters->status->value);
+        }
+
+        return $query
             ->orderByDesc('created_at')
             ->orderByDesc('id')
             ->get();

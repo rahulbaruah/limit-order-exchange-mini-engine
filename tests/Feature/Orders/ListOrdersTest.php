@@ -27,6 +27,62 @@ test('an unsupported symbol is rejected', function () {
         ->assertJsonValidationErrors('symbol');
 });
 
+test('orders can be filtered by side', function () {
+    $user = User::factory()->create();
+
+    $buy = Order::factory()->for($user)->buy()->create();
+    $sell = Order::factory()->for($user)->sell()->create();
+
+    $response = $this->actingAs($user)->getJson('/api/orders?symbol=BTC&side=sell')->assertOk();
+
+    expect($response->json('data.*.id'))->toBe([$sell->id]);
+});
+
+test('orders can be filtered by status', function () {
+    $user = User::factory()->create();
+
+    Order::factory()->for($user)->buy()->create();
+    $filled = Order::factory()->for($user)->buy()->filled()->create();
+    Order::factory()->for($user)->buy()->cancelled()->create();
+
+    $response = $this->actingAs($user)->getJson('/api/orders?symbol=BTC&status=filled')->assertOk();
+
+    expect($response->json('data.*.id'))->toBe([$filled->id]);
+});
+
+test('side and status filters combine without exposing other users or markets', function () {
+    $user = User::factory()->create();
+    $other = User::factory()->create();
+
+    $matching = Order::factory()->for($user)->sell()->create();
+    Order::factory()->for($user)->sell()->filled()->create();
+    Order::factory()->for($user)->buy()->create();
+    Order::factory()->for($user)->sell()->forSymbol(Symbol::Eth)->create();
+    Order::factory()->for($other)->sell()->create();
+
+    $response = $this->actingAs($user)
+        ->getJson('/api/orders?symbol=BTC&side=sell&status=open')
+        ->assertOk();
+
+    expect($response->json('data.*.id'))->toBe([$matching->id]);
+});
+
+test('an unsupported side filter is rejected', function () {
+    $user = User::factory()->create();
+
+    $this->actingAs($user)->getJson('/api/orders?symbol=BTC&side=hold')
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors('side');
+});
+
+test('an unsupported status filter is rejected', function () {
+    $user = User::factory()->create();
+
+    $this->actingAs($user)->getJson('/api/orders?symbol=BTC&status=pending')
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors('status');
+});
+
 test('the authenticated users own buy orders are returned across every status', function () {
     $me = User::factory()->create();
 

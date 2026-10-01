@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\Http\Requests;
 
+use App\Enums\OrderSide;
+use App\Enums\OrderStatus;
 use App\Enums\Symbol;
 use Illuminate\Contracts\Validation\ValidationRule;
 use Illuminate\Foundation\Http\FormRequest;
@@ -28,6 +30,8 @@ class ListOrdersRequest extends FormRequest
     {
         return [
             'symbol' => ['required', Rule::enum(Symbol::class)],
+            'side' => ['sometimes', Rule::enum(OrderSide::class)],
+            'status' => ['sometimes', Rule::enum(OrderStatus::class)],
         ];
     }
 }

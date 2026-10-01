@@ -8,7 +8,7 @@ use App\Actions\Orders\CancelOrder;
 use App\Actions\Orders\CreateOrder;
 use App\DTOs\CancelOrderData;
 use App\DTOs\CreateOrderData;
-use App\Enums\Symbol;
+use App\DTOs\ListOrdersData;
 use App\Http\Requests\CreateOrderRequest;
 use App\Http\Requests\ListOrdersRequest;
 use App\Http\Resources\OrderResource;
@@ -19,16 +19,14 @@ use Illuminate\Http\Request;
 class OrderController extends Controller
 {
     /**
-     * List the orders the authenticated user is involved in for the requested symbol.
-     *
-     * Includes the user's own buy orders and the sell orders matched against them.
+     * List the authenticated user's orders for the requested symbol and optional filters.
      */
     public function index(ListOrdersRequest $request, OrderRepository $orderRepository): JsonResponse
     {
-        $symbol = Symbol::from((string) $request->validated('symbol'));
+        $filters = ListOrdersData::fromRequest($request);
 
         return OrderResource::collection(
-            $orderRepository->visibleForUser((int) $request->user()->id, $symbol),
+            $orderRepository->visibleForUser((int) $request->user()->id, $filters),
         )->response();
     }
 
