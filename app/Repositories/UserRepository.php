@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Repositories;
 
 use App\Models\User;
+use Illuminate\Database\Eloquent\Collection;
 
 class UserRepository
 {
@@ -22,6 +23,25 @@ class UserRepository
     public function lockById(int $userId): User
     {
         return User::query()->lockForUpdate()->findOrFail($userId);
+    }
+
+    /**
+     * Lock users in ascending ID order for the duration of the transaction.
+     *
+     * @return Collection<int, User>
+     */
+    public function lockByIds(int ...$userIds): Collection
+    {
+        $userIds = array_values(array_unique($userIds));
+        sort($userIds, SORT_NUMERIC);
+
+        $users = new Collection;
+
+        foreach ($userIds as $userId) {
+            $users->put($userId, $this->lockById($userId));
+        }
+
+        return $users;
     }
 
     /**

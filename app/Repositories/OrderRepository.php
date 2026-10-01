@@ -9,6 +9,7 @@ use App\Enums\OrderSide;
 use App\Enums\OrderStatus;
 use App\Enums\Symbol;
 use App\Models\Order;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Collection;
 
 class OrderRepository
@@ -48,29 +49,41 @@ class OrderRepository
     }
 
     /**
-     * Find the best open counter-order that fully matches the given order, locked for the transaction.
-     *
-     * Only exact-amount matches on the opposite side qualify, and a user never
-     * trades with themselves. Candidates are ranked by price-time priority: the
-     * cheapest sell (or the highest-paying buy), then the earliest placed.
+     * Find the best counter-order candidate without acquiring a row lock.
      */
-    public function findMatchableCounterOrderForUpdate(Order $order): ?Order
+    public function findMatchableCounterOrderCandidate(CreateOrderData $data): ?Order
     {
-        $isBuy = $order->side === OrderSide::Buy;
+        return $this->matchableCounterOrders($data)->first();
+    }
 
-        return Order::query()
-            ->where('symbol', $order->symbol->value)
-            ->where('side', $isBuy ? OrderSide::Sell->value : OrderSide::Buy->value)
-            ->where('status', OrderStatus::Open->value)
-            ->whereKeyNot($order->id)
-            ->where('user_id', '!=', $order->user_id)
-            ->where('amount', $order->amount)
-            ->where('price', $isBuy ? '<=' : '>=', $order->price)
-            ->orderBy('price', $isBuy ? 'asc' : 'desc')
-            ->orderBy('created_at')
-            ->orderBy('id')
+    /**
+     * Lock the previously discovered candidate only if it is still matchable.
+     */
+    public function lockMatchableCounterOrderForUpdate(CreateOrderData $data, int $candidateId): ?Order
+    {
+        return $this->matchableCounterOrders($data)
+            ->whereKey($candidateId)
             ->lockForUpdate()
             ->first();
+    }
+
+    /**
+     * @return Builder<Order>
+     */
+    private function matchableCounterOrders(CreateOrderData $data): Builder
+    {
+        $isBuy = $data->side === OrderSide::Buy;
+
+        return Order::query()
+            ->where('symbol', $data->symbol->value)
+            ->where('side', $isBuy ? OrderSide::Sell->value : OrderSide::Buy->value)
+            ->where('status', OrderStatus::Open->value)
+            ->where('user_id', '!=', $data->userId)
+            ->where('amount', $data->amount)
+            ->where('price', $isBuy ? '<=' : '>=', $data->price)
+            ->orderBy('price', $isBuy ? 'asc' : 'desc')
+            ->orderBy('created_at')
+            ->orderBy('id');
     }
 
     /**

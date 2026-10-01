@@ -41,28 +41,56 @@ class CreateOrder
      */
     public function handle(CreateOrderData $data): Order
     {
-        return DB::transaction(function () use ($data): Order {
-            $user = $this->userRepository->lockById($data->userId);
+        for ($attempt = 0; $attempt < 3; $attempt++) {
+            $order = DB::transaction(function () use ($data): ?Order {
+                $candidate = $this->orderRepository->findMatchableCounterOrderCandidate($data);
+                $userIds = [$data->userId];
 
-            $existing = $this->orderRepository->findByIdempotencyKey($data->userId, $data->idempotencyKey);
-
-            if ($existing !== null) {
-                if (! $this->matchesRequest($existing, $data)) {
-                    abort(409, __('This idempotency key has already been used with different order details.'));
+                if ($candidate !== null) {
+                    $userIds[] = (int) $candidate->user_id;
                 }
 
-                return $existing;
+                $users = $this->userRepository->lockByIds(...$userIds);
+                $user = $users->get($data->userId);
+
+                if (! $user instanceof User) {
+                    abort(404, __('User not found.'));
+                }
+
+                $existing = $this->orderRepository->findByIdempotencyKey($data->userId, $data->idempotencyKey);
+
+                if ($existing !== null) {
+                    if (! $this->matchesRequest($existing, $data)) {
+                        abort(409, __('This idempotency key has already been used with different order details.'));
+                    }
+
+                    return $existing;
+                }
+
+                $counterOrder = $candidate === null
+                    ? null
+                    : $this->orderRepository->lockMatchableCounterOrderForUpdate($data, (int) $candidate->id);
+
+                if ($candidate !== null && $counterOrder === null) {
+                    return null;
+                }
+
+                $order = match ($data->side) {
+                    OrderSide::Buy => $this->createBuyOrder($user, $data),
+                    OrderSide::Sell => $this->createSellOrder($data),
+                };
+
+                $this->matchingService->match($order, $counterOrder, $users);
+
+                return $order;
+            }, attempts: 3);
+
+            if ($order !== null) {
+                return $order;
             }
+        }
 
-            $order = match ($data->side) {
-                OrderSide::Buy => $this->createBuyOrder($user, $data),
-                OrderSide::Sell => $this->createSellOrder($data),
-            };
-
-            $this->matchingService->match($order);
-
-            return $order;
-        });
+        abort(409, __('The order book changed while matching. Please retry the request.'));
     }
 
     /**
