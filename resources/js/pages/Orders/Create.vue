@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Head, useHttp } from '@inertiajs/vue3';
-import { ref } from 'vue';
+import { computed, ref } from 'vue';
 import InputError from '@/components/InputError.vue';
 import { Button } from '@/components/ui/button';
 import {
@@ -64,6 +64,81 @@ const sideOptions = [
 const emptyOrder = { symbol: '', side: '', price: '', amount: '' };
 
 const form = useHttp<typeof emptyOrder, OrderResponse>({ ...emptyOrder });
+
+/** Mirrors App\Actions\Orders\CreateOrder::FeeRate. */
+const commissionPercent = 1.5;
+
+/** Parse a plain decimal string into integer units scaled by 10^scale. */
+function parseScaled(value: string, scale: number): bigint | null {
+    const match = /^(\d+)(?:\.(\d+))?$/.exec(value.trim());
+
+    if (match === null) {
+        return null;
+    }
+
+    const fraction = match[2] ?? '';
+
+    if (fraction.length > scale) {
+        return null;
+    }
+
+    return (
+        BigInt(match[1]) * 10n ** BigInt(scale) +
+        BigInt(fraction.padEnd(scale, '0'))
+    );
+}
+
+/** Integer ceiling division. */
+function ceilDiv(value: bigint, divisor: bigint): bigint {
+    return (value + divisor - 1n) / divisor;
+}
+
+/** Render integer cent units as a grouped decimal string. */
+function formatUsd(units: bigint): string {
+    const whole = (units / 100n)
+        .toString()
+        .replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+    const cents = (units % 100n).toString().padStart(2, '0');
+
+    return `${whole}.${cents}`;
+}
+
+type BuyReservation = {
+    notional: string;
+    commission: string;
+    total: string;
+};
+
+/**
+ * Cost of a buy order, matching the backend's decimal maths exactly.
+ *
+ * The backend derives the commission from the unrounded notional and rounds
+ * both the notional and the commission up to whole cents, so this works in
+ * integer units rather than floating point to stay in step with it.
+ */
+const buyReservation = computed<BuyReservation | null>(() => {
+    if (form.side !== 'buy') {
+        return null;
+    }
+
+    const price = parseScaled(form.price, 2);
+    const amount = parseScaled(form.amount, 8);
+
+    if (price === null || amount === null || price <= 0n || amount <= 0n) {
+        return null;
+    }
+
+    // price x amount in units of 10^-10; both parts round up to whole cents.
+    const product = price * amount;
+    const notional = ceilDiv(product, 100_000_000n);
+    const commission = ceilDiv(product * 15n, 100_000_000_000n);
+
+    return {
+        notional: formatUsd(notional),
+        commission: formatUsd(commission),
+        total: formatUsd(notional + commission),
+    };
+});
 
 const createdOrder = ref<Order | null>(null);
 const orderError = ref<string | null>(null);
@@ -183,6 +258,41 @@ async function submit(): Promise<void> {
                             placeholder="0.01000000"
                         />
                         <InputError :message="form.errors.amount" />
+                    </div>
+
+                    <div
+                        v-if="buyReservation"
+                        class="grid gap-2 rounded-md border bg-muted/40 p-3 text-sm"
+                        data-test="buy-reservation"
+                    >
+                        <div class="flex items-center justify-between">
+                            <span class="text-muted-foreground"
+                                >Order value</span
+                            >
+                            <span class="font-medium tabular-nums"
+                                >${{ buyReservation.notional }}</span
+                            >
+                        </div>
+                        <div class="flex items-center justify-between">
+                            <span class="text-muted-foreground"
+                                >Commission ({{ commissionPercent }}%)</span
+                            >
+                            <span
+                                class="font-medium tabular-nums"
+                                data-test="estimated-commission"
+                                >${{ buyReservation.commission }}</span
+                            >
+                        </div>
+                        <div
+                            class="flex items-center justify-between border-t pt-2"
+                        >
+                            <span class="text-muted-foreground"
+                                >Total reserved</span
+                            >
+                            <span class="font-medium tabular-nums"
+                                >${{ buyReservation.total }}</span
+                            >
+                        </div>
                     </div>
 
                     <p
