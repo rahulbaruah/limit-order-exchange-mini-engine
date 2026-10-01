@@ -21,6 +21,8 @@ import {
     DialogTitle,
 } from '@/components/ui/dialog';
 import { Spinner } from '@/components/ui/spinner';
+import type { RealtimeConnectionState } from '@/composables/useRealtimeSync';
+import { useRealtimeSync } from '@/composables/useRealtimeSync';
 import { dashboard } from '@/routes';
 import { cancel, index as ordersIndex } from '@/routes/orders';
 import { show as profileShow } from '@/routes/profile';
@@ -148,6 +150,19 @@ const page = usePage();
 useEcho(`user.${page.props.auth.user.id}`, '.OrderMatched', () => {
     void refreshDashboard();
 });
+
+const { connectionState, isBrowserOnline } = useRealtimeSync({
+    synchronize: refreshDashboard,
+});
+
+const connectionBadges: Record<
+    RealtimeConnectionState,
+    { label: string; variant: 'default' | 'secondary' | 'destructive' }
+> = {
+    live: { label: 'Live', variant: 'default' },
+    reconnecting: { label: 'Reconnecting…', variant: 'secondary' },
+    offline: { label: 'Offline', variant: 'destructive' },
+};
 
 const walletSymbols = ['USD', 'BTC', 'ETH'] as const;
 
@@ -336,9 +351,17 @@ const statusVariants: Record<OrderStatus, 'default' | 'secondary' | 'outline'> =
 
         <div class="flex flex-wrap items-start justify-between gap-3">
             <div class="space-y-1">
-                <h1 class="text-lg font-semibold tracking-tight">
-                    Orders &amp; Wallet Overview
-                </h1>
+                <div class="flex items-center gap-2">
+                    <h1 class="text-lg font-semibold tracking-tight">
+                        Orders &amp; Wallet Overview
+                    </h1>
+                    <Badge
+                        :variant="connectionBadges[connectionState].variant"
+                        aria-live="polite"
+                    >
+                        {{ connectionBadges[connectionState].label }}
+                    </Badge>
+                </div>
                 <p class="text-sm text-muted-foreground">
                     Review your balances, reserved funds, and recent market
                     activity.
@@ -636,6 +659,7 @@ const statusVariants: Record<OrderStatus, 'default' | 'secondary' | 'outline'> =
                                             v-if="order.canCancel"
                                             variant="outline"
                                             size="sm"
+                                            :disabled="!isBrowserOnline"
                                             @click="requestCancellation(order)"
                                         >
                                             Cancel
@@ -689,7 +713,7 @@ const statusVariants: Record<OrderStatus, 'default' | 'secondary' | 'outline'> =
                     </DialogClose>
                     <Button
                         variant="destructive"
-                        :disabled="cancelRequest.processing"
+                        :disabled="cancelRequest.processing || !isBrowserOnline"
                         @click="confirmCancellation"
                     >
                         <Spinner v-if="cancelRequest.processing" />
