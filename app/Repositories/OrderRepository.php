@@ -9,6 +9,7 @@ use App\Enums\OrderSide;
 use App\Enums\OrderStatus;
 use App\Enums\Symbol;
 use App\Models\Order;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Collection;
 
 class OrderRepository
@@ -48,23 +49,31 @@ class OrderRepository
     }
 
     /**
-     * Retrieve every open order for a symbol, ordered as a market book.
+     * Retrieve the orders a user is involved in for a symbol.
      *
-     * Buys are returned before sells; buys are ordered by descending price and
-     * sells by ascending price, with the oldest order first to break ties.
+     * Includes the user's own buy orders and the sell orders that were matched
+     * against those buys, across every order status. Other users' unrelated
+     * orders are excluded.
      *
      * @return Collection<int, Order>
      */
-    public function openForSymbol(Symbol $symbol): Collection
+    public function visibleForUser(int $userId, Symbol $symbol): Collection
     {
         return Order::query()
             ->where('symbol', $symbol->value)
-            ->where('status', OrderStatus::Open->value)
-            ->orderByRaw('CASE WHEN side = ? THEN 0 ELSE 1 END', [OrderSide::Buy->value])
-            ->orderByRaw('CASE WHEN side = ? THEN price END DESC', [OrderSide::Buy->value])
-            ->orderByRaw('CASE WHEN side = ? THEN price END ASC', [OrderSide::Sell->value])
-            ->orderBy('created_at')
-            ->orderBy('id')
+            ->where(function (Builder $query) use ($userId): void {
+                $query
+                    ->where(function (Builder $query) use ($userId): void {
+                        $query->where('user_id', $userId)
+                            ->where('side', OrderSide::Buy->value);
+                    })
+                    ->orWhere(function (Builder $query) use ($userId): void {
+                        $query->where('side', OrderSide::Sell->value)
+                            ->whereHas('sellTrades', fn (Builder $trade): Builder => $trade->where('buyer_id', $userId));
+                    });
+            })
+            ->orderByDesc('created_at')
+            ->orderByDesc('id')
             ->get();
     }
 

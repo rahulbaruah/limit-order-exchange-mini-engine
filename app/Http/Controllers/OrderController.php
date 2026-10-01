@@ -19,13 +19,17 @@ use Illuminate\Http\Request;
 class OrderController extends Controller
 {
     /**
-     * List the open order book for the requested symbol.
+     * List the orders the authenticated user is involved in for the requested symbol.
+     *
+     * Includes the user's own buy orders and the sell orders matched against them.
      */
     public function index(ListOrdersRequest $request, OrderRepository $orderRepository): JsonResponse
     {
         $symbol = Symbol::from((string) $request->validated('symbol'));
 
-        return OrderResource::collection($orderRepository->openForSymbol($symbol))->response();
+        return OrderResource::collection(
+            $orderRepository->visibleForUser((int) $request->user()->id, $symbol),
+        )->response();
     }
 
     /**

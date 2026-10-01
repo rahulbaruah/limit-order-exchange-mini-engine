@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use App\Enums\Symbol;
 use App\Models\Order;
+use App\Models\Trade;
 use App\Models\User;
 
 test('unauthenticated requests are rejected', function () {
@@ -26,64 +27,111 @@ test('an unsupported symbol is rejected', function () {
         ->assertJsonValidationErrors('symbol');
 });
 
-test('open orders for the requested symbol from every user are returned', function () {
-    $caller = User::factory()->create();
-    $other = User::factory()->create();
+test('the authenticated users own buy orders are returned across every status', function () {
+    $me = User::factory()->create();
 
-    Order::factory()->for($caller)->create();
-    Order::factory()->for($other)->sell()->create();
+    $open = Order::factory()->for($me)->buy()->create();
+    $filled = Order::factory()->for($me)->buy()->filled()->create();
+    $cancelled = Order::factory()->for($me)->buy()->cancelled()->create();
 
-    $response = $this->actingAs($caller)->getJson('/api/orders?symbol=BTC')
+    $response = $this->actingAs($me)->getJson('/api/orders?symbol=BTC')
+        ->assertOk()
+        ->assertJsonCount(3, 'data');
+
+    expect($response->json('data.*.id'))
+        ->toContain($open->id)
+        ->toContain($filled->id)
+        ->toContain($cancelled->id);
+});
+
+test('sell orders matched against the users buys are returned', function () {
+    $me = User::factory()->create();
+    $seller = User::factory()->create();
+
+    $buy = Order::factory()->for($me)->buy()->create();
+    $sell = Order::factory()->for($seller)->sell()->create();
+
+    Trade::factory()->create([
+        'buy_order_id' => $buy->id,
+        'sell_order_id' => $sell->id,
+        'buyer_id' => $me->id,
+        'seller_id' => $seller->id,
+    ]);
+
+    $response = $this->actingAs($me)->getJson('/api/orders?symbol=BTC')
         ->assertOk()
         ->assertJsonCount(2, 'data');
+
+    expect($response->json('data.*.id'))->toContain($buy->id)->toContain($sell->id);
+});
+
+test('orders unrelated to the authenticated user are excluded', function () {
+    $me = User::factory()->create();
+    $other = User::factory()->create();
+    $anotherBuyer = User::factory()->create();
+
+    $myBuy = Order::factory()->for($me)->buy()->create();
+
+    // My own sell order, not matched against one of my buys.
+    Order::factory()->for($me)->sell()->create();
+
+    // Another user's buy order.
+    Order::factory()->for($other)->buy()->create();
+
+    // A sell order matched to a different buyer.
+    $otherBuy = Order::factory()->for($other)->buy()->create();
+    $otherSell = Order::factory()->for($me)->sell()->create();
+    Trade::factory()->create([
+        'buy_order_id' => $otherBuy->id,
+        'sell_order_id' => $otherSell->id,
+        'buyer_id' => $anotherBuyer->id,
+        'seller_id' => $me->id,
+    ]);
+
+    $response = $this->actingAs($me)->getJson('/api/orders?symbol=BTC')->assertOk();
+
+    expect($response->json('data.*.id'))->toBe([$myBuy->id]);
+});
+
+test('orders for other symbols are excluded', function () {
+    $me = User::factory()->create();
+
+    Order::factory()->for($me)->buy()->create();
+    Order::factory()->for($me)->buy()->forSymbol(Symbol::Eth)->create();
+
+    $this->actingAs($me)->getJson('/api/orders?symbol=BTC')
+        ->assertOk()
+        ->assertJsonCount(1, 'data');
+});
+
+test('the most recently created orders are returned first', function () {
+    $me = User::factory()->create();
+
+    $first = Order::factory()->for($me)->buy()->create();
+    $second = Order::factory()->for($me)->buy()->create();
+
+    $response = $this->actingAs($me)->getJson('/api/orders?symbol=BTC')->assertOk();
+
+    expect($response->json('data.*.id'))->toBe([$second->id, $first->id]);
+});
+
+test('the response does not expose the owning user', function () {
+    $me = User::factory()->create();
+    Order::factory()->for($me)->buy()->create();
+
+    $response = $this->actingAs($me)->getJson('/api/orders?symbol=BTC')->assertOk();
 
     expect(array_keys($response->json('data.0')))->not->toContain('user_id');
 });
 
-test('orders for other symbols and non open orders are excluded', function () {
-    $user = User::factory()->create();
+test('an empty list is returned when the user has no relevant orders', function () {
+    $me = User::factory()->create();
+    $other = User::factory()->create();
 
-    Order::factory()->for($user)->create();
-    Order::factory()->for($user)->forSymbol(Symbol::Eth)->create();
-    Order::factory()->for($user)->filled()->create();
-    Order::factory()->for($user)->cancelled()->create();
+    Order::factory()->for($other)->buy()->create();
+    Order::factory()->for($me)->buy()->forSymbol(Symbol::Eth)->create();
 
-    $this->actingAs($user)->getJson('/api/orders?symbol=BTC')
-        ->assertOk()
-        ->assertJsonCount(1, 'data')
-        ->assertJsonPath('data.0.status', 'open');
-});
-
-test('the book lists buys by highest price then sells by lowest price', function () {
-    $user = User::factory()->create();
-
-    Order::factory()->for($user)->sell()->create(['price' => '97000.00']);
-    Order::factory()->for($user)->buy()->create(['price' => '94000.00']);
-    Order::factory()->for($user)->sell()->create(['price' => '95000.00']);
-    Order::factory()->for($user)->buy()->create(['price' => '96000.00']);
-
-    $response = $this->actingAs($user)->getJson('/api/orders?symbol=BTC')->assertOk();
-
-    expect($response->json('data.*.side'))->toBe(['buy', 'buy', 'sell', 'sell'])
-        ->and($response->json('data.*.price'))->toBe(['96000.00', '94000.00', '95000.00', '97000.00']);
-});
-
-test('orders at the same price are returned oldest first', function () {
-    $user = User::factory()->create();
-
-    $first = Order::factory()->for($user)->buy()->create(['price' => '95000.00']);
-    $second = Order::factory()->for($user)->buy()->create(['price' => '95000.00']);
-
-    $response = $this->actingAs($user)->getJson('/api/orders?symbol=BTC')->assertOk();
-
-    expect($response->json('data.*.id'))->toBe([$first->id, $second->id]);
-});
-
-test('an empty book is returned when no open orders match the symbol', function () {
-    $user = User::factory()->create();
-    Order::factory()->for($user)->forSymbol(Symbol::Eth)->create();
-
-    $this->actingAs($user)->getJson('/api/orders?symbol=BTC')
+    $this->actingAs($me)->getJson('/api/orders?symbol=BTC')
         ->assertOk()
         ->assertJsonCount(0, 'data');
 });
