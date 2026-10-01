@@ -41,6 +41,25 @@ DB_PASSWORD=your_password
 
 Create the database before connecting to it. If you change these settings after running `composer run setup`, apply the migrations to the selected database with `php artisan migrate`.
 
+### Real-Time Updates
+
+When two orders match, an `OrderMatched` event is broadcast through [Pusher](https://pusher.com) to the buyer's and seller's private channels, and their dashboards refresh without reloading the page.
+
+Create a Channels app in your Pusher dashboard and add its credentials to `.env`:
+
+```dotenv
+BROADCAST_CONNECTION=pusher
+
+PUSHER_APP_ID=your_app_id
+PUSHER_APP_KEY=your_app_key
+PUSHER_APP_SECRET=your_app_secret
+PUSHER_APP_CLUSTER=your_app_cluster
+```
+
+The `VITE_PUSHER_*` variables reuse these values, so rebuild the frontend (`npm run build`) or restart `composer run dev` after changing them.
+
+Broadcasting uses the queue, which defaults to the `database` connection (`QUEUE_CONNECTION=database`). `composer run dev` runs a queue worker that processes jobs from the database queue, so no separate worker is needed during development. If you start the processes individually, run `php artisan queue:listen` alongside the server, otherwise match events are never delivered.
+
 ### Demo Data
 
 Seed the database with the demo accounts and their starting balances:
