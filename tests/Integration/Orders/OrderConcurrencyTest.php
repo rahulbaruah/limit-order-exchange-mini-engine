@@ -77,10 +77,8 @@ test('concurrent reciprocal matches settle one trade without deadlock', function
             ->and($orders->where('status', OrderStatus::Filled))->toHaveCount(4)
             ->and($trades)->toHaveCount(2)
             ->and($tradedOrderIds)->toHaveCount(4)
-            ->and($trades->pluck('price')->unique())->toHaveCount(1)
-            ->and($trades->pluck('price')->sole())->toBe('95000.00')
-            ->and($trades->pluck('amount')->unique())->toHaveCount(1)
-            ->and($trades->pluck('amount')->sole())->toBe('0.01000000');
+            ->and($trades->pluck('price')->unique()->sole())->toBe('95000.00')
+            ->and($trades->pluck('amount')->unique()->sole())->toBe('0.01000000');
 
         expect($buyer->refresh()->balance)->toBe('98071.50')
             ->and($buyer->locked_balance)->toBe('0.00')
