@@ -1,6 +1,6 @@
 #!/bin/sh
 #
-# Pre-commit hook: formats staged PHP files with Pint, then runs Larastan.
+# Pre-commit hook: runs frontend checks, formats staged PHP files with Pint, then runs Larastan.
 #
 # Install with:   composer hooks:install
 # Skip once with: SKIP_HOOKS=1 git commit ...
@@ -10,9 +10,12 @@ set -e
 cd "$(git rev-parse --show-toplevel)"
 
 if [ -n "${SKIP_HOOKS:-}" ]; then
-    echo "SKIP_HOOKS is set, skipping Pint and Larastan."
+    echo "SKIP_HOOKS is set, skipping all pre-commit checks."
     exit 0
 fi
+
+echo "Running frontend formatting and lint checks..."
+npm run check
 
 staged_php="$(git diff --cached --name-only --no-renames --diff-filter=ACMR -- '*.php')"
 

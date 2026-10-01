@@ -70,9 +70,9 @@ php artisan db:seed
 
 This creates a funded **Buy Tester** with **100,000.00 USD** and a funded **Sell Tester** with **1.00000000 BTC** and **10.00000000 ETH**. Use either account to sign in from the login screen:
 
-| Account | Email | Password | Starting balance |
-| --- | --- | --- | --- |
-| Buy Tester | `buyer@example.com` | `password` | 100,000.00 USD |
+| Account     | Email                | Password   | Starting balance                 |
+| ----------- | -------------------- | ---------- | -------------------------------- |
+| Buy Tester  | `buyer@example.com`  | `password` | 100,000.00 USD                   |
 | Sell Tester | `seller@example.com` | `password` | 1.00000000 BTC · 10.00000000 ETH |
 
 While signed in, you can top up or overwrite the current user's USD balance and BTC/ETH assets at any time from the demo settings page at [http://localhost:8000/settings/demo](http://localhost:8000/settings/demo). This page is intended for testing and demo purposes only and is not suited for production.

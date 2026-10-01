@@ -217,20 +217,20 @@ function runOrderConcurrencyWorkers(array $workers): array
             ], base_path(), $environment);
             $process->setTimeout(45);
             $process->start();
-            $processes[] = [$process, $readyFile, $resultFile];
+            $processes[] = [$index, $process, $readyFile, $resultFile];
         }
 
         $deadline = microtime(true) + 20;
 
         while (microtime(true) < $deadline) {
-            if (collect($processes)->every(fn (array $worker): bool => is_file($worker[1]))) {
+            if (collect($processes)->every(fn (array $worker): bool => is_file($worker[2]))) {
                 break;
             }
 
             usleep(10_000);
         }
 
-        if (! collect($processes)->every(fn (array $worker): bool => is_file($worker[1]))) {
+        if (! collect($processes)->every(fn (array $worker): bool => is_file($worker[2]))) {
             throw new RuntimeException('Concurrency workers did not reach the start barrier.');
         }
 
@@ -238,11 +238,26 @@ function runOrderConcurrencyWorkers(array $workers): array
 
         $results = [];
 
-        foreach ($processes as [$process, , $resultFile]) {
+        foreach ($processes as [$index, $process, , $resultFile]) {
             $process->wait();
 
             if (! $process->isSuccessful()) {
-                throw new RuntimeException($process->getErrorOutput().$process->getOutput());
+                throw new RuntimeException(sprintf(
+                    "Concurrency worker %d failed (exit code %s).\nSTDERR:\n%s\nSTDOUT:\n%s",
+                    $index,
+                    $process->getExitCode() ?? 'unknown',
+                    $process->getErrorOutput(),
+                    $process->getOutput(),
+                ));
+            }
+
+            if (! is_file($resultFile)) {
+                throw new RuntimeException(sprintf(
+                    "Concurrency worker %d exited successfully without writing its result file.\nSTDERR:\n%s\nSTDOUT:\n%s",
+                    $index,
+                    $process->getErrorOutput(),
+                    $process->getOutput(),
+                ));
             }
 
             $results[] = json_decode((string) file_get_contents($resultFile), true, flags: JSON_THROW_ON_ERROR);
@@ -250,7 +265,7 @@ function runOrderConcurrencyWorkers(array $workers): array
 
         return $results;
     } finally {
-        foreach ($processes as [$process]) {
+        foreach ($processes as [, $process]) {
             if ($process->isRunning()) {
                 $process->stop(1);
             }

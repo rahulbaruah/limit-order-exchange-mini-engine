@@ -76,4 +76,6 @@ if ($payload['action'] === 'create') {
     throw new InvalidArgumentException('Unsupported concurrency worker action.');
 }
 
-file_put_contents($resultFile, json_encode($result, JSON_THROW_ON_ERROR), LOCK_EX);
+if (file_put_contents($resultFile, json_encode($result, JSON_THROW_ON_ERROR), LOCK_EX) === false) {
+    throw new RuntimeException("Unable to write concurrency worker result file: {$resultFile}");
+}
