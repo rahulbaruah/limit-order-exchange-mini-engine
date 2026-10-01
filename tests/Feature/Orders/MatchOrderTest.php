@@ -8,6 +8,7 @@ use App\Models\Asset;
 use App\Models\Order;
 use App\Models\Trade;
 use App\Models\User;
+use Brick\Math\BigDecimal;
 
 /**
  * Create a user holding an open sell order with the asset amount already locked.
@@ -59,6 +60,34 @@ test('a buy order matches a cheaper resting sell order', function () {
         ->and($trade->amount)->toBe('0.01000000')
         ->and($trade->gross_amount)->toBe('940.00')
         ->and($trade->fee)->toBe('14.10');
+});
+
+test('a buy order matches a resting sell order at exactly the same price', function () {
+    [, $sellOrder] = restingSell('95000.00');
+    $buyer = User::factory()->funded('100000.00')->create();
+
+    $response = $this->actingAs($buyer)->postJson('/api/orders', [
+        'symbol' => 'BTC',
+        'side' => 'buy',
+        'price' => '95000.00',
+        'amount' => '0.01000000',
+    ], ['Idempotency-Key' => 'exact-price-match']);
+
+    $response->assertCreated()->assertJsonPath('data.status', 'filled');
+
+    $trade = Trade::query()->sole();
+
+    expect($sellOrder->refresh()->status)->toBe(OrderStatus::Filled)
+        ->and($trade->price)->toBe('95000.00')
+        ->and($trade->amount)->toBe('0.01000000')
+        ->and($trade->gross_amount)->toBe('950.00')
+        ->and($trade->fee)->toBe('14.25');
+
+    $buyer->refresh();
+
+    expect($buyer->balance)->toBe('99035.75')
+        ->and($buyer->locked_balance)->toBe('0.00')
+        ->and($buyer->assets()->sole()->amount)->toBe('0.01000000');
 });
 
 test('a matched buy is settled at the resting price and the overcharge is refunded', function () {
@@ -172,6 +201,60 @@ test('a sell order matches a resting buy order at the buy price', function () {
         ->and($sellerAsset->locked_amount)->toBe('0.00000000');
 });
 
+test('a resting buy order is matched when a sell order arrives through the api', function () {
+    $buyer = User::factory()->funded('100000.00')->create();
+    $seller = User::factory()->funded('0.00')->create();
+
+    Asset::factory()->create([
+        'user_id' => $seller->id,
+        'symbol' => Symbol::Btc,
+        'amount' => '1.00000000',
+    ]);
+
+    $buyId = $this->actingAs($buyer)->postJson('/api/orders', [
+        'symbol' => 'BTC',
+        'side' => 'buy',
+        'price' => '95000.00',
+        'amount' => '0.01000000',
+    ], ['Idempotency-Key' => 'resting-buy'])
+        ->assertCreated()
+        ->assertJsonPath('data.status', 'open')
+        ->json('data.id');
+
+    $buyer->refresh();
+
+    expect($buyer->balance)->toBe('99035.75')
+        ->and($buyer->locked_balance)->toBe('964.25');
+
+    $this->actingAs($seller)->postJson('/api/orders', [
+        'symbol' => 'BTC',
+        'side' => 'sell',
+        'price' => '94000.00',
+        'amount' => '0.01000000',
+    ], ['Idempotency-Key' => 'arriving-sell'])
+        ->assertCreated()
+        ->assertJsonPath('data.status', 'filled');
+
+    // The execution price is the resting counter order's price, not the arriving sell's.
+    $trade = Trade::query()->sole();
+
+    expect($trade->buy_order_id)->toBe($buyId)
+        ->and($trade->price)->toBe('95000.00')
+        ->and($trade->gross_amount)->toBe('950.00')
+        ->and($trade->fee)->toBe('14.25')
+        ->and(Order::query()->findOrFail($buyId)->status)->toBe(OrderStatus::Filled);
+
+    $sellerAsset = $seller->refresh()->assets()->sole();
+    $buyer->refresh();
+
+    expect($seller->balance)->toBe('950.00')
+        ->and($sellerAsset->amount)->toBe('0.99000000')
+        ->and($sellerAsset->locked_amount)->toBe('0.00000000')
+        ->and($buyer->balance)->toBe('99035.75')
+        ->and($buyer->locked_balance)->toBe('0.00')
+        ->and($buyer->assets()->sole()->amount)->toBe('0.01000000');
+});
+
 test('the cheapest resting sell is matched first', function () {
     [, $expensive] = restingSell('94000.00');
     [, $cheapest] = restingSell('93000.00');
@@ -265,6 +348,12 @@ test('an order that cannot be matched stays open', function (array $restingOverr
 
     expect($sellOrder->refresh()->status)->toBe($restingOverrides['status'] ?? OrderStatus::Open)
         ->and(Trade::query()->count())->toBe(0);
+
+    // An unmatched buy still reserves its notional and fee.
+    $buyer->refresh();
+
+    expect($buyer->balance)->toBe('99035.75')
+        ->and($buyer->locked_balance)->toBe('964.25');
 })->with([
     'the sell is priced above the buy' => [['price' => '96000.00'], []],
     'the symbols differ' => [['symbol' => Symbol::Eth], []],
@@ -344,6 +433,55 @@ test('replaying an idempotent request does not match a second time', function ()
         ->and(Order::query()->count())->toBe(2)
         ->and($sellOrder->refresh()->status)->toBe(OrderStatus::Filled)
         ->and($buyer->refresh()->balance)->toBe('99045.90');
+});
+
+test('after a trade the combined usd balances fall by exactly the buyer fee', function () {
+    $seller = User::factory()->funded('100000.00')->create();
+
+    Asset::factory()->create([
+        'user_id' => $seller->id,
+        'symbol' => Symbol::Btc,
+        'amount' => '1.00000000',
+    ]);
+
+    $buyer = User::factory()->funded('100000.00')->create();
+
+    $this->actingAs($seller)->postJson('/api/orders', [
+        'symbol' => 'BTC',
+        'side' => 'sell',
+        'price' => '90000.00',
+        'amount' => '0.50000000',
+    ], ['Idempotency-Key' => 'reconcile-sell'])->assertCreated();
+
+    $this->actingAs($buyer)->postJson('/api/orders', [
+        'symbol' => 'BTC',
+        'side' => 'buy',
+        'price' => '95000.00',
+        'amount' => '0.50000000',
+    ], ['Idempotency-Key' => 'reconcile-buy'])
+        ->assertCreated()
+        ->assertJsonPath('data.status', 'filled');
+
+    // 90,000.00 x 0.5 = 45,000.00 gross, and 1.5% = 675.00 paid by the buyer.
+    $trade = Trade::query()->sole();
+
+    expect($trade->price)->toBe('90000.00')
+        ->and($trade->gross_amount)->toBe('45000.00')
+        ->and($trade->fee)->toBe('675.00');
+
+    $seller->refresh();
+    $buyer->refresh();
+
+    expect($seller->balance)->toBe('145000.00')
+        ->and($buyer->balance)->toBe('54325.00')
+        ->and($buyer->locked_balance)->toBe('0.00');
+
+    // The only USD leaving the system is the buyer's fee.
+    $combined = BigDecimal::of($seller->balance)->plus($buyer->balance);
+
+    expect((string) BigDecimal::of('200000.00')->minus($combined))->toBe('675.00')
+        ->and($seller->assets()->sole()->amount)->toBe('0.50000000')
+        ->and($buyer->assets()->sole()->amount)->toBe('0.50000000');
 });
 
 test('a filled order can no longer be cancelled', function () {

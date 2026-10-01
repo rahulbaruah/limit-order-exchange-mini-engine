@@ -99,7 +99,11 @@ test('insufficient funds including the fee leave balances and orders unchanged',
         'side' => 'buy',
         'price' => '95000.00',
         'amount' => '0.01000000',
-    ], ['Idempotency-Key' => 'insufficient-funds'])->assertUnprocessable()->assertJsonValidationErrors('balance');
+    ], ['Idempotency-Key' => 'insufficient-funds'])
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors([
+            'balance' => 'Insufficient available balance to cover this order and its fee.',
+        ]);
 
     $user->refresh();
 
@@ -377,7 +381,9 @@ test('a sell order exceeding the available asset amount is rejected', function (
         'amount' => '0.01000000',
     ], ['Idempotency-Key' => 'insufficient-assets'])
         ->assertUnprocessable()
-        ->assertJsonValidationErrors('asset_balance');
+        ->assertJsonValidationErrors([
+            'asset_balance' => 'Insufficient available asset amount to cover this order.',
+        ]);
 
     $asset = Asset::query()->where('user_id', $user->id)->where('symbol', Symbol::Btc)->sole();
 

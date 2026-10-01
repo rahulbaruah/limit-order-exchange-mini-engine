@@ -61,6 +61,30 @@ test('cancelling an open sell releases the locked asset amount', function () {
         ->and(Order::query()->sole()->status->value)->toBe('cancelled');
 });
 
+test('cancelling an open sell twice releases the locked asset only once', function () {
+    $user = User::factory()->funded('1000.00')->create();
+    Asset::factory()->for($user)->create(['symbol' => Symbol::Btc, 'amount' => '0.50000000']);
+
+    $orderId = $this->actingAs($user)->postJson('/api/orders', [
+        'symbol' => 'BTC',
+        'side' => 'sell',
+        'price' => '95000.00',
+        'amount' => '0.01000000',
+    ], ['Idempotency-Key' => 'double-cancel-sell'])->json('data.id');
+
+    $this->actingAs($user)->postJson("/api/orders/{$orderId}/cancel")
+        ->assertOk()
+        ->assertJsonPath('data.status', 'cancelled');
+
+    $this->actingAs($user)->postJson("/api/orders/{$orderId}/cancel")->assertStatus(409);
+
+    $asset = Asset::query()->where('user_id', $user->id)->where('symbol', Symbol::Btc)->sole();
+
+    expect($asset->amount)->toBe('0.50000000')
+        ->and($asset->locked_amount)->toBe('0.00000000')
+        ->and(Order::query()->sole()->status->value)->toBe('cancelled');
+});
+
 test('cancelling a buy whose notional and fee were rounded up restores the exact balance', function () {
     $user = User::factory()->funded('1000.00')->create();
 
