@@ -29,11 +29,13 @@ import {
     SelectValue,
 } from '@/components/ui/select';
 import { Spinner } from '@/components/ui/spinner';
+import type { OrderStatus } from '@/composables/useDashboardOrders';
+import { useDashboardOrders } from '@/composables/useDashboardOrders';
+import { useOrderCancellation } from '@/composables/useOrderCancellation';
 import type { RealtimeConnectionState } from '@/composables/useRealtimeSync';
 import { useRealtimeSync } from '@/composables/useRealtimeSync';
 import { dashboard } from '@/routes';
 import { index as orderBookIndex } from '@/routes/order-book';
-import { cancel, index as ordersIndex } from '@/routes/orders';
 import { show as profileShow } from '@/routes/profile';
 
 defineOptions({
@@ -70,22 +72,6 @@ type OrderBookResponse = {
     };
 };
 
-type OrderSide = 'Buy' | 'Sell';
-
-type OrderStatus = 'Open' | 'Filled' | 'Cancelled';
-
-type OrderRow = {
-    id: string;
-    numericId: number;
-    market: string;
-    side: OrderSide;
-    price: string;
-    amount: string;
-    status: OrderStatus;
-    canCancel: boolean;
-    placedAt: string;
-};
-
 type ProfileResponse = {
     data: {
         usd: {
@@ -100,47 +86,33 @@ type ProfileResponse = {
     };
 };
 
-type ApiOrder = {
-    id: number;
-    symbol: string;
-    side: 'buy' | 'sell';
-    price: string;
-    amount: string;
-    status: 'open' | 'filled' | 'cancelled';
-    created_at: string;
-};
-
-type OrderMarketFilter = 'all' | MarketSymbol;
-type OrderSideFilter = 'all' | ApiOrder['side'];
-type OrderStatusFilter = 'all' | ApiOrder['status'];
-
-type OrdersResponse = {
-    data: ApiOrder[];
-};
-
-type OrderResponse = {
-    data: ApiOrder;
-};
-
 /** These standalone GET requests carry no request body. */
 type EmptyForm = Record<string, never>;
 
 const profileRequest = useHttp<EmptyForm, ProfileResponse>({});
-const btcOrdersRequest = useHttp<EmptyForm, OrdersResponse>({});
-const ethOrdersRequest = useHttp<EmptyForm, OrdersResponse>({});
 const orderBookRequest = useHttp<EmptyForm, OrderBookResponse>({});
-const btcOrders = ref<ApiOrder[]>([]);
-const ethOrders = ref<ApiOrder[]>([]);
+const {
+    orderMarketFilter,
+    orderSideFilter,
+    orderStatusFilter,
+    orderLoading,
+    orderLoadError,
+    loadOrders,
+    orders,
+    hasOrderFilters,
+} = useDashboardOrders(formatDecimal);
+const {
+    cancelRequest,
+    orderPendingCancellation,
+    cancelDialogOpen,
+    cancelError,
+    requestCancellation,
+    confirmCancellation,
+} = useOrderCancellation(loadDashboard);
 
 const selectedMarket = ref<MarketSymbol>('BTC');
-const orderMarketFilter = ref<OrderMarketFilter>('all');
-const orderSideFilter = ref<OrderSideFilter>('all');
-const orderStatusFilter = ref<OrderStatusFilter>('all');
 const orderBookLoading = ref(true);
 const orderBookError = ref<string | null>(null);
-const orderLoading = ref(true);
-const orderLoadError = ref<string | null>(null);
-let orderRequestVersion = 0;
 const orderBook = computed<OrderBookResponse['data']>(
     () =>
         orderBookRequest.response?.data ?? {
@@ -152,60 +124,6 @@ const orderBook = computed<OrderBookResponse['data']>(
 
 const isLoading = ref(true);
 const loadError = ref<string | null>(null);
-
-/** Fetch only the markets and order criteria currently selected. */
-async function loadOrders(background = false): Promise<void> {
-    const requestVersion = ++orderRequestVersion;
-    const symbols: MarketSymbol[] =
-        orderMarketFilter.value === 'all'
-            ? ['BTC', 'ETH']
-            : [orderMarketFilter.value];
-    const filters = {
-        ...(orderSideFilter.value === 'all'
-            ? {}
-            : { side: orderSideFilter.value }),
-        ...(orderStatusFilter.value === 'all'
-            ? {}
-            : { status: orderStatusFilter.value }),
-    };
-
-    btcOrdersRequest.cancel();
-    ethOrdersRequest.cancel();
-    orderLoading.value = !background;
-    orderLoadError.value = null;
-
-    try {
-        const results = await Promise.all(
-            symbols.map(async (symbol) => {
-                const request =
-                    symbol === 'BTC' ? btcOrdersRequest : ethOrdersRequest;
-                const response = await request.get(
-                    ordersIndex.url({ query: { symbol, ...filters } }),
-                );
-
-                return { symbol, orders: response.data };
-            }),
-        );
-
-        if (requestVersion !== orderRequestVersion) {
-            return;
-        }
-
-        btcOrders.value =
-            results.find((result) => result.symbol === 'BTC')?.orders ?? [];
-        ethOrders.value =
-            results.find((result) => result.symbol === 'ETH')?.orders ?? [];
-    } catch {
-        if (requestVersion === orderRequestVersion) {
-            orderLoadError.value =
-                'Unable to load your orders. Please try again.';
-        }
-    } finally {
-        if (requestVersion === orderRequestVersion) {
-            orderLoading.value = false;
-        }
-    }
-}
 
 /** Load the authenticated user's balances and their BTC/ETH order history. */
 async function loadDashboard(): Promise<void> {
@@ -261,10 +179,6 @@ onMounted(loadDashboard);
 
 watch(selectedMarket, () => {
     void loadOrderBook();
-});
-
-watch([orderMarketFilter, orderSideFilter, orderStatusFilter], () => {
-    void loadOrders();
 });
 
 const page = usePage();
@@ -336,115 +250,6 @@ const walletBalances = computed<WalletBalance[]>(() => {
             locked: formatDecimal(locked, scale),
         };
     });
-});
-
-const sideLabels: Record<ApiOrder['side'], OrderSide> = {
-    buy: 'Buy',
-    sell: 'Sell',
-};
-
-const statusLabels: Record<ApiOrder['status'], OrderStatus> = {
-    open: 'Open',
-    filled: 'Filled',
-    cancelled: 'Cancelled',
-};
-
-/** Render an ISO-8601 timestamp as a compact local date and time. */
-function formatPlacedAt(value: string): string {
-    const placedAt = new Date(value);
-
-    if (Number.isNaN(placedAt.getTime())) {
-        return '—';
-    }
-
-    const pad = (part: number): string => part.toString().padStart(2, '0');
-
-    return `${placedAt.getFullYear()}-${pad(placedAt.getMonth() + 1)}-${pad(
-        placedAt.getDate(),
-    )} ${pad(placedAt.getHours())}:${pad(placedAt.getMinutes())}`;
-}
-
-/**
- * Combine both markets' rows into one list, newest first to match the API
- * ordering. The order id breaks ties for orders created together.
- */
-const orders = computed<OrderRow[]>(() =>
-    [...btcOrders.value, ...ethOrders.value]
-        .sort((a, b) => {
-            const difference =
-                Date.parse(b.created_at) - Date.parse(a.created_at);
-
-            return difference !== 0 ? difference : b.id - a.id;
-        })
-        .map((order) => ({
-            id: `#${order.id}`,
-            numericId: order.id,
-            market: `${order.symbol}`,
-            side: sideLabels[order.side],
-            price: formatDecimal(order.price, 2),
-            amount: formatDecimal(order.amount, 8),
-            status: statusLabels[order.status],
-            canCancel: order.status === 'open',
-            placedAt: formatPlacedAt(order.created_at),
-        })),
-);
-
-const hasOrderFilters = computed(
-    () =>
-        orderMarketFilter.value !== 'all' ||
-        orderSideFilter.value !== 'all' ||
-        orderStatusFilter.value !== 'all',
-);
-
-const cancelRequest = useHttp<EmptyForm, OrderResponse>({});
-
-const orderPendingCancellation = ref<OrderRow | null>(null);
-const cancelDialogOpen = ref(false);
-const cancelError = ref<string | null>(null);
-
-/** Open the confirmation dialog for the order the user wants to cancel. */
-function requestCancellation(order: OrderRow): void {
-    cancelError.value = null;
-    orderPendingCancellation.value = order;
-    cancelDialogOpen.value = true;
-}
-
-/** POST the cancellation and refresh the dashboard once it succeeds. */
-async function confirmCancellation(): Promise<void> {
-    const order = orderPendingCancellation.value;
-
-    if (order === null) {
-        return;
-    }
-
-    cancelError.value = null;
-    let wasCancelled = false;
-
-    try {
-        await cancelRequest.post(cancel.url(order.numericId), {
-            onSuccess: () => {
-                wasCancelled = true;
-            },
-            onError: () => {
-                cancelError.value =
-                    'This order can no longer be cancelled. Refresh to see its current status.';
-            },
-        });
-    } catch {
-        cancelError.value = 'Unable to cancel this order. Please try again.';
-    }
-
-    if (wasCancelled) {
-        cancelDialogOpen.value = false;
-        await loadDashboard();
-    }
-}
-
-watch(cancelDialogOpen, (isOpen) => {
-    if (!isOpen) {
-        orderPendingCancellation.value = null;
-        cancelError.value = null;
-    }
 });
 
 const statusVariants: Record<OrderStatus, 'default' | 'secondary' | 'outline'> =
