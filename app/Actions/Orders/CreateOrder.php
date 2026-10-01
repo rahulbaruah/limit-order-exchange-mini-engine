@@ -88,7 +88,7 @@ class CreateOrder
             $user,
             $balance->minus($required)->toScale(self::UsdScale)->__toString(),
             BigDecimal::of($user->locked_balance)
-                ->plus($notional)
+                ->plus($required)
                 ->toScale(self::UsdScale)
                 ->__toString(),
         );

@@ -79,6 +79,7 @@ class CancelOrder
                 ->__toString(),
             BigDecimal::of($user->locked_balance)
                 ->minus($notional)
+                ->minus($fee)
                 ->toScale(self::UsdScale)
                 ->__toString(),
         );

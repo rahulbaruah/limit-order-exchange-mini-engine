@@ -55,7 +55,7 @@ test('eth buy orders are accepted', function () {
     ], ['Idempotency-Key' => 'eth-order'])->assertCreated()->assertJsonPath('data.symbol', 'ETH');
 });
 
-test('the notional is reserved and the fee is deducted upfront', function () {
+test('buy orders reserve notional and fee and deduct the fee upfront', function () {
     $user = User::factory()->funded('100000.00')->create();
 
     // 0.01 BTC at 95,000 USD = 950.00 notional; 1.5% fee = 14.25.
@@ -69,7 +69,7 @@ test('the notional is reserved and the fee is deducted upfront', function () {
     $user->refresh();
 
     expect($user->balance)->toBe('99035.75')
-        ->and($user->locked_balance)->toBe('950.00');
+        ->and($user->locked_balance)->toBe('964.25');
 });
 
 test('fractional cents are rounded up for both the notional and the fee', function () {
@@ -86,7 +86,7 @@ test('fractional cents are rounded up for both the notional and the fee', functi
 
     $user->refresh();
 
-    expect($user->locked_balance)->toBe('33.34')
+    expect($user->locked_balance)->toBe('33.85')
         ->and($user->balance)->toBe('966.15');
 });
 
@@ -121,7 +121,7 @@ test('a balance of exactly the notional plus fee is accepted', function () {
     $user->refresh();
 
     expect($user->balance)->toBe('0.00')
-        ->and($user->locked_balance)->toBe('950.00');
+        ->and($user->locked_balance)->toBe('964.25');
 });
 
 test('invalid orders are rejected without changing balances', function (array $payload) {
@@ -222,7 +222,7 @@ test('retrying with the same idempotency key returns the original order', functi
 
     expect(Order::query()->count())->toBe(1)
         ->and($user->balance)->toBe('99035.75')
-        ->and($user->locked_balance)->toBe('950.00');
+        ->and($user->locked_balance)->toBe('964.25');
 });
 
 test('a retry with equivalent decimal formatting is treated as a duplicate', function () {

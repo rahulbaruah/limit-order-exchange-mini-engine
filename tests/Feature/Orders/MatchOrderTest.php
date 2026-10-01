@@ -135,7 +135,7 @@ test('a matched buy adds to an existing asset balance', function () {
 });
 
 test('a sell order matches a resting buy order at the buy price', function () {
-    $buyer = User::factory()->funded('99035.75')->create(['locked_balance' => '950.00']);
+    $buyer = User::factory()->funded('99035.75')->create(['locked_balance' => '964.25']);
 
     $buyOrder = Order::factory()->buy()->create([
         'user_id' => $buyer->id,
@@ -209,8 +209,8 @@ test('the earliest resting sell is matched first at an equal price', function ()
 });
 
 test('the highest resting buy is matched first', function () {
-    $makeBuy = function (string $price): Order {
-        $buyer = User::factory()->funded('100000.00')->create(['locked_balance' => $price]);
+    $makeBuy = function (string $price, string $lockedBalance): Order {
+        $buyer = User::factory()->funded('100000.00')->create(['locked_balance' => $lockedBalance]);
 
         return Order::factory()->buy()->create([
             'user_id' => $buyer->id,
@@ -219,8 +219,8 @@ test('the highest resting buy is matched first', function () {
         ]);
     };
 
-    $lower = $makeBuy('95000.00');
-    $higher = $makeBuy('96000.00');
+    $lower = $makeBuy('95000.00', '964.25');
+    $higher = $makeBuy('96000.00', '974.40');
 
     $seller = User::factory()->funded('0.00')->create();
     Asset::factory()->create(['user_id' => $seller->id, 'amount' => '1.00000000']);
@@ -320,7 +320,7 @@ test('a resting order is only matched once', function () {
 
     expect($sellOrder->refresh()->status)->toBe(OrderStatus::Filled)
         ->and(Trade::query()->count())->toBe(1)
-        ->and($secondBuyer->refresh()->locked_balance)->toBe('950.00');
+        ->and($secondBuyer->refresh()->locked_balance)->toBe('964.25');
 });
 
 test('replaying an idempotent request does not match a second time', function () {

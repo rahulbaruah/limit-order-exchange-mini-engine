@@ -25,7 +25,7 @@ test('cancelling an open buy refunds the notional and the upfront fee', function
 
     $user->refresh();
     expect($user->balance)->toBe('99035.75')
-        ->and($user->locked_balance)->toBe('950.00');
+        ->and($user->locked_balance)->toBe('964.25');
 
     $this->actingAs($user)->postJson("/api/orders/{$orderId}/cancel")
         ->assertOk()
@@ -74,7 +74,7 @@ test('cancelling a buy whose notional and fee were rounded up restores the exact
 
     $user->refresh();
     expect($user->balance)->toBe('966.15')
-        ->and($user->locked_balance)->toBe('33.34');
+        ->and($user->locked_balance)->toBe('33.85');
 
     $this->actingAs($user)->postJson("/api/orders/{$orderId}/cancel")->assertOk();
 

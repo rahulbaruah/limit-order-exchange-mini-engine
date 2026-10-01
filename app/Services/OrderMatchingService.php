@@ -95,13 +95,14 @@ class OrderMatchingService
         $buyer = $this->userRepository->lockById((int) $buyOrder->user_id);
 
         $reserved = $this->notionalFor($buyOrder->price, $buyOrder->amount);
-        $refund = $reserved->minus($gross)
-            ->plus($this->feeFor($buyOrder->price, $buyOrder->amount)->minus($fee));
+        $reservedFee = $this->feeFor($buyOrder->price, $buyOrder->amount);
+        $lockedReservation = $reserved->plus($reservedFee);
+        $refund = $reserved->minus($gross)->plus($reservedFee->minus($fee));
 
         $this->userRepository->updateBalances(
             $buyer,
             BigDecimal::of($buyer->balance)->plus($refund)->toScale(self::UsdScale)->__toString(),
-            BigDecimal::of($buyer->locked_balance)->minus($reserved)->toScale(self::UsdScale)->__toString(),
+            BigDecimal::of($buyer->locked_balance)->minus($lockedReservation)->toScale(self::UsdScale)->__toString(),
         );
 
         $asset = $this->assetRepository->findOrCreateForUpdate((int) $buyOrder->user_id, $buyOrder->symbol);

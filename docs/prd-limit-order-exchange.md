@@ -31,8 +31,8 @@ Build a small authenticated exchange application where users can place BTC or ET
 **Acceptance Criteria:**
 
 - [ ] The order form accepts a supported symbol, buy/sell side, positive price, and positive amount.
-- [ ] For a buy, required USD is calculated as `price × amount`; the order is rejected if available USD is insufficient.
-- [ ] On acceptance, the required USD is reserved and the order is created with `open` status.
+- [ ] For a buy, required USD is calculated as `price × amount` plus the 1.5% fee at the limit price; the order is rejected if available USD is insufficient.
+- [ ] On acceptance, the notional and fee are recorded in `locked_balance` and the order is created with `open` status.
 - [ ] Invalid symbols, sides, non-positive values, and insufficient balances return a useful validation error and do not create or reserve an order.
 
 ### US-003: Place a limit sell order
@@ -129,7 +129,7 @@ Build a small authenticated exchange application where users can place BTC or ET
 - **FR-8:** `GET /api/orders?symbol={symbol}` returns open buy and sell orders for the requested supported symbol for the order book.
 - **FR-9:** `POST /api/orders` validates and creates a limit order, reserves the corresponding USD or asset amount, then invokes matching.
 - **FR-10:** `POST /api/orders/{id}/cancel` cancels the caller's open order and releases its remaining reservation.
-- **FR-11:** A buy order reserves `price × amount` USD while open. A sell order moves its amount into the asset's locked amount while open.
+- **FR-11:** A buy order reserves `price × amount` USD plus the 1.5% fee calculated at its limit price while open. The available USD balance is reduced by the full reservation, which is recorded in `locked_balance`; cancellation releases the full reservation, while settlement consumes the executed notional and fee and refunds unused price improvement or fee overcharge. A sell order moves its amount into the asset's locked amount while open.
 - **FR-12:** Match only orders for the same symbol, with opposite sides and crossing limit prices. Select the first valid counter-order according to a consistent and documented ordering rule.
 - **FR-13:** Matching is full-fill-only. The engine must not partially fill orders; after a successful match both matched orders are marked filled.
 - **FR-14:** Settle balances and release unused price improvement/reservations as appropriate when the execution price is below a buyer's limit price.
