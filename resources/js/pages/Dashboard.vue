@@ -24,6 +24,7 @@ import { Spinner } from '@/components/ui/spinner';
 import type { RealtimeConnectionState } from '@/composables/useRealtimeSync';
 import { useRealtimeSync } from '@/composables/useRealtimeSync';
 import { dashboard } from '@/routes';
+import { index as orderBookIndex } from '@/routes/order-book';
 import { cancel, index as ordersIndex } from '@/routes/orders';
 import { show as profileShow } from '@/routes/profile';
 
@@ -46,9 +47,19 @@ type WalletBalance = {
 };
 
 type BookLevel = {
+    id: number;
     price: string;
     amount: string;
-    total: string;
+};
+
+type MarketSymbol = 'BTC' | 'ETH';
+
+type OrderBookResponse = {
+    data: {
+        asks: BookLevel[];
+        bids: BookLevel[];
+        spread: string | null;
+    };
 };
 
 type OrderSide = 'Buy' | 'Sell';
@@ -105,6 +116,19 @@ type EmptyForm = Record<string, never>;
 const profileRequest = useHttp<EmptyForm, ProfileResponse>({});
 const btcOrdersRequest = useHttp<EmptyForm, OrdersResponse>({});
 const ethOrdersRequest = useHttp<EmptyForm, OrdersResponse>({});
+const orderBookRequest = useHttp<EmptyForm, OrderBookResponse>({});
+
+const selectedMarket = ref<MarketSymbol>('BTC');
+const orderBookLoading = ref(true);
+const orderBookError = ref<string | null>(null);
+const orderBook = computed<OrderBookResponse['data']>(
+    () =>
+        orderBookRequest.response?.data ?? {
+            asks: [],
+            bids: [],
+            spread: null,
+        },
+);
 
 const isLoading = ref(true);
 const loadError = ref<string | null>(null);
@@ -124,11 +148,28 @@ async function loadDashboard(): Promise<void> {
     }
 }
 
+/** Fetch the selected market's current open price levels. */
+async function loadOrderBook(): Promise<void> {
+    const symbol = selectedMarket.value;
+
+    orderBookLoading.value = true;
+    orderBookError.value = null;
+
+    try {
+        await orderBookRequest.get(orderBookIndex.url({ query: { symbol } }));
+    } catch {
+        orderBookError.value = `Unable to load the ${symbol}/USD order book. Please try again.`;
+    } finally {
+        orderBookLoading.value = false;
+    }
+}
+
 function fetchDashboard(): Promise<unknown> {
     return Promise.all([
         profileRequest.get(profileShow.url()),
         btcOrdersRequest.get(ordersIndex.url({ query: { symbol: 'BTC' } })),
         ethOrdersRequest.get(ordersIndex.url({ query: { symbol: 'ETH' } })),
+        loadOrderBook(),
     ]);
 }
 
@@ -144,6 +185,10 @@ async function refreshDashboard(): Promise<void> {
 }
 
 onMounted(loadDashboard);
+
+watch(selectedMarket, () => {
+    void loadOrderBook();
+});
 
 const page = usePage();
 
@@ -241,20 +286,6 @@ function formatPlacedAt(value: string): string {
         placedAt.getDate(),
     )} ${pad(placedAt.getHours())}:${pad(placedAt.getMinutes())}`;
 }
-
-const asks: BookLevel[] = [
-    { price: '95,012.00', amount: '0.0412', total: '3,914.49' },
-    { price: '95,005.50', amount: '0.1200', total: '11,400.66' },
-    { price: '94,998.00', amount: '0.0750', total: '7,124.85' },
-    { price: '94,990.25', amount: '0.2300', total: '21,847.76' },
-];
-
-const bids: BookLevel[] = [
-    { price: '94,980.00', amount: '0.0630', total: '5,983.74' },
-    { price: '94,972.50', amount: '0.1450', total: '13,771.01' },
-    { price: '94,965.00', amount: '0.0980', total: '9,306.57' },
-    { price: '94,958.75', amount: '0.2100', total: '19,941.34' },
-];
 
 /**
  * Combine both markets' rows into one list, newest first to match the API
@@ -416,116 +447,150 @@ const statusVariants: Record<OrderStatus, 'default' | 'secondary' | 'outline'> =
                                 Resting buy and sell interest.
                             </CardDescription>
                         </div>
-                        <div class="flex items-center gap-2">
-                            <Badge variant="outline">Sample data</Badge>
-                            <Badge variant="outline">BTC/USD</Badge>
-                        </div>
+                        <select
+                            v-model="selectedMarket"
+                            aria-label="Order book market"
+                            class="h-8 rounded-md border bg-background px-2 text-xs"
+                        >
+                            <option value="BTC">BTC/USD</option>
+                            <option value="ETH">ETH/USD</option>
+                        </select>
                     </div>
                 </CardHeader>
 
                 <CardContent class="space-y-3">
-                    <div class="overflow-hidden rounded-lg border">
-                        <table class="w-full text-sm">
-                            <thead>
-                                <tr
-                                    class="border-b bg-muted/50 text-xs text-muted-foreground"
-                                >
-                                    <th
-                                        class="px-3 py-1.5 text-left font-medium"
-                                    >
-                                        Price
-                                    </th>
-                                    <th
-                                        class="px-3 py-1.5 text-right font-medium"
-                                    >
-                                        Amount
-                                    </th>
-                                    <th
-                                        class="px-3 py-1.5 text-right font-medium"
-                                    >
-                                        Total
-                                    </th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                <tr
-                                    v-for="level in asks"
-                                    :key="`ask-${level.price}`"
-                                    class="border-b last:border-0"
-                                >
-                                    <td
-                                        class="px-3 py-1.5 text-rose-600 tabular-nums dark:text-rose-400"
-                                    >
-                                        {{ level.price }}
-                                    </td>
-                                    <td
-                                        class="px-3 py-1.5 text-right tabular-nums"
-                                    >
-                                        {{ level.amount }}
-                                    </td>
-                                    <td
-                                        class="px-3 py-1.5 text-right text-muted-foreground tabular-nums"
-                                    >
-                                        {{ level.total }}
-                                    </td>
-                                </tr>
-                            </tbody>
-                        </table>
+                    <div
+                        v-if="orderBookLoading"
+                        class="flex items-center justify-center gap-2 rounded-lg border border-dashed p-8 text-sm text-muted-foreground"
+                    >
+                        <Spinner />
+                        Loading order book…
                     </div>
 
-                    <p
-                        class="text-center text-xs text-muted-foreground tabular-nums"
+                    <div
+                        v-else-if="orderBookError"
+                        class="flex flex-col items-center gap-3 rounded-lg border border-dashed border-destructive/40 p-6 text-center text-sm text-destructive"
                     >
-                        Spread 32.00 USD
-                    </p>
+                        {{ orderBookError }}
+                        <Button
+                            variant="outline"
+                            size="sm"
+                            @click="loadOrderBook"
+                        >
+                            Retry
+                        </Button>
+                    </div>
 
-                    <div class="overflow-hidden rounded-lg border">
-                        <table class="w-full text-sm">
-                            <thead>
-                                <tr
-                                    class="border-b bg-muted/50 text-xs text-muted-foreground"
-                                >
-                                    <th
-                                        class="px-3 py-1.5 text-left font-medium"
+                    <div v-else class="space-y-3">
+                        <div class="overflow-hidden rounded-lg border">
+                            <table class="w-full text-sm">
+                                <thead>
+                                    <tr
+                                        class="border-b bg-muted/50 text-xs text-muted-foreground"
                                     >
-                                        Price
-                                    </th>
-                                    <th
-                                        class="px-3 py-1.5 text-right font-medium"
+                                        <th
+                                            class="px-3 py-1.5 text-left font-medium"
+                                        >
+                                            Price
+                                        </th>
+                                        <th
+                                            class="px-3 py-1.5 text-right font-medium"
+                                        >
+                                            Amount
+                                        </th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr
+                                        v-if="orderBook.asks.length === 0"
+                                        class="border-b last:border-0"
                                     >
-                                        Amount
-                                    </th>
-                                    <th
-                                        class="px-3 py-1.5 text-right font-medium"
+                                        <td
+                                            colspan="2"
+                                            class="px-3 py-2 text-center text-muted-foreground"
+                                        >
+                                            No open sell orders
+                                        </td>
+                                    </tr>
+                                    <tr
+                                        v-for="level in orderBook.asks"
+                                        :key="`ask-${level.id}`"
+                                        class="border-b last:border-0"
                                     >
-                                        Total
-                                    </th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                <tr
-                                    v-for="level in bids"
-                                    :key="`bid-${level.price}`"
-                                    class="border-b last:border-0"
-                                >
-                                    <td
-                                        class="px-3 py-1.5 text-emerald-600 tabular-nums dark:text-emerald-400"
+                                        <td
+                                            class="px-3 py-1.5 text-rose-600 tabular-nums dark:text-rose-400"
+                                        >
+                                            {{ formatDecimal(level.price, 2) }}
+                                        </td>
+                                        <td
+                                            class="px-3 py-1.5 text-right tabular-nums"
+                                        >
+                                            {{ formatDecimal(level.amount, 4) }}
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+
+                        <p
+                            class="text-center text-xs text-muted-foreground tabular-nums"
+                        >
+                            {{
+                                orderBook.spread === null
+                                    ? 'Spread unavailable'
+                                    : `Spread ${formatDecimal(orderBook.spread, 2)} USD`
+                            }}
+                        </p>
+
+                        <div class="overflow-hidden rounded-lg border">
+                            <table class="w-full text-sm">
+                                <thead>
+                                    <tr
+                                        class="border-b bg-muted/50 text-xs text-muted-foreground"
                                     >
-                                        {{ level.price }}
-                                    </td>
-                                    <td
-                                        class="px-3 py-1.5 text-right tabular-nums"
+                                        <th
+                                            class="px-3 py-1.5 text-left font-medium"
+                                        >
+                                            Price
+                                        </th>
+                                        <th
+                                            class="px-3 py-1.5 text-right font-medium"
+                                        >
+                                            Amount
+                                        </th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr
+                                        v-if="orderBook.bids.length === 0"
+                                        class="border-b last:border-0"
                                     >
-                                        {{ level.amount }}
-                                    </td>
-                                    <td
-                                        class="px-3 py-1.5 text-right text-muted-foreground tabular-nums"
+                                        <td
+                                            colspan="2"
+                                            class="px-3 py-2 text-center text-muted-foreground"
+                                        >
+                                            No open buy orders
+                                        </td>
+                                    </tr>
+                                    <tr
+                                        v-for="level in orderBook.bids"
+                                        :key="`bid-${level.id}`"
+                                        class="border-b last:border-0"
                                     >
-                                        {{ level.total }}
-                                    </td>
-                                </tr>
-                            </tbody>
-                        </table>
+                                        <td
+                                            class="px-3 py-1.5 text-emerald-600 tabular-nums dark:text-emerald-400"
+                                        >
+                                            {{ formatDecimal(level.price, 2) }}
+                                        </td>
+                                        <td
+                                            class="px-3 py-1.5 text-right tabular-nums"
+                                        >
+                                            {{ formatDecimal(level.amount, 4) }}
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
                     </div>
                 </CardContent>
             </Card>

@@ -51,7 +51,7 @@ Build a small authenticated exchange application where users can place BTC or ET
 
 **Acceptance Criteria:**
 
-- [ ] `GET /api/orders?symbol=BTC` returns open buy and sell orders for that symbol.
+- [ ] `GET /api/order-book?symbol=BTC` returns individual open buy and sell orders for that symbol; `GET /api/orders?symbol=BTC` returns the authenticated user's order history.
 - [ ] The UI provides a selected-symbol order book and the user's past orders, including open, filled, and cancelled orders.
 - [ ] Changing the selected symbol refreshes the displayed order book.
 
@@ -126,7 +126,7 @@ Build a small authenticated exchange application where users can place BTC or ET
 
 - **FR-6:** Require authentication for wallet, order, and cancellation endpoints; users may only access or mutate their own wallet and orders.
 - **FR-7:** `GET /api/profile` returns the current authenticated user's USD and asset balances.
-- **FR-8:** `GET /api/orders?symbol={symbol}` returns open buy and sell orders for the requested supported symbol for the order book.
+- **FR-8:** `GET /api/order-book?symbol={symbol}` returns individual open buy and sell orders for the requested supported symbol. `GET /api/orders?symbol={symbol}` returns the authenticated user's order history.
 - **FR-9:** `POST /api/orders` validates and creates a limit order, reserves the corresponding USD or asset amount, then invokes matching.
 - **FR-10:** `POST /api/orders/{id}/cancel` cancels the caller's open order and releases its remaining reservation.
 - **FR-11:** A buy order reserves `price × amount` USD plus the 1.5% fee calculated at its limit price while open. The available USD balance is reduced by the full reservation, which is recorded in `locked_balance`; cancellation releases the full reservation, while settlement consumes the executed notional and fee and refunds unused price improvement or fee overcharge. A sell order moves its amount into the asset's locked amount while open.

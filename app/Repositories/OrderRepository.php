@@ -5,12 +5,14 @@ declare(strict_types=1);
 namespace App\Repositories;
 
 use App\DTOs\CreateOrderData;
+use App\DTOs\OrderBookOrderData;
 use App\Enums\OrderSide;
 use App\Enums\OrderStatus;
 use App\Enums\Symbol;
 use App\Models\Order;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Collection;
+use Illuminate\Support\Collection as SupportCollection;
 
 class OrderRepository
 {
@@ -103,6 +105,26 @@ class OrderRepository
             ->orderByDesc('created_at')
             ->orderByDesc('id')
             ->get();
+    }
+
+    /**
+     * Retrieve open orders for a market-book snapshot, without exposing owner data.
+     *
+     * @return SupportCollection<int, OrderBookOrderData>
+     */
+    public function openOrdersForBook(Symbol $symbol): SupportCollection
+    {
+        return collect(Order::query()
+            ->where('symbol', $symbol->value)
+            ->where('status', OrderStatus::Open->value)
+            ->get(['id', 'side', 'price', 'amount'])
+            ->map(static fn (Order $order): OrderBookOrderData => new OrderBookOrderData(
+                $order->id,
+                $order->side,
+                $order->price,
+                $order->amount,
+            ))
+            ->all());
     }
 
     /**
