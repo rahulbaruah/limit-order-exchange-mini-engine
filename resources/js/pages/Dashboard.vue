@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Head, useHttp } from '@inertiajs/vue3';
-import { computed, onMounted, ref } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -10,9 +10,18 @@ import {
     CardHeader,
     CardTitle,
 } from '@/components/ui/card';
+import {
+    Dialog,
+    DialogClose,
+    DialogContent,
+    DialogDescription,
+    DialogFooter,
+    DialogHeader,
+    DialogTitle,
+} from '@/components/ui/dialog';
 import { Spinner } from '@/components/ui/spinner';
 import { dashboard } from '@/routes';
-import { index as ordersIndex } from '@/routes/orders';
+import { cancel, index as ordersIndex } from '@/routes/orders';
 import { show as profileShow } from '@/routes/profile';
 
 defineOptions({
@@ -45,11 +54,13 @@ type OrderStatus = 'Open' | 'Filled' | 'Cancelled';
 
 type OrderRow = {
     id: string;
+    numericId: number;
     market: string;
     side: OrderSide;
     price: string;
     amount: string;
     status: OrderStatus;
+    canCancel: boolean;
     placedAt: string;
 };
 
@@ -79,6 +90,10 @@ type ApiOrder = {
 
 type OrdersResponse = {
     data: ApiOrder[];
+};
+
+type OrderResponse = {
+    data: ApiOrder;
 };
 
 /** These standalone GET requests carry no request body. */
@@ -221,14 +236,67 @@ const orders = computed<OrderRow[]>(() =>
         })
         .map((order) => ({
             id: `#${order.id}`,
+            numericId: order.id,
             market: `${order.symbol}`,
             side: sideLabels[order.side],
             price: formatDecimal(order.price, 2),
             amount: formatDecimal(order.amount, 8),
             status: statusLabels[order.status],
+            canCancel: order.status === 'open',
             placedAt: formatPlacedAt(order.created_at),
         })),
 );
+
+const cancelRequest = useHttp<EmptyForm, OrderResponse>({});
+
+const orderPendingCancellation = ref<OrderRow | null>(null);
+const cancelDialogOpen = ref(false);
+const cancelError = ref<string | null>(null);
+
+/** Open the confirmation dialog for the order the user wants to cancel. */
+function requestCancellation(order: OrderRow): void {
+    cancelError.value = null;
+    orderPendingCancellation.value = order;
+    cancelDialogOpen.value = true;
+}
+
+/** POST the cancellation and refresh the dashboard once it succeeds. */
+async function confirmCancellation(): Promise<void> {
+    const order = orderPendingCancellation.value;
+
+    if (order === null) {
+        return;
+    }
+
+    cancelError.value = null;
+    let wasCancelled = false;
+
+    try {
+        await cancelRequest.post(cancel.url(order.numericId), {
+            onSuccess: () => {
+                wasCancelled = true;
+            },
+            onError: () => {
+                cancelError.value =
+                    'This order can no longer be cancelled. Refresh to see its current status.';
+            },
+        });
+    } catch {
+        cancelError.value = 'Unable to cancel this order. Please try again.';
+    }
+
+    if (wasCancelled) {
+        cancelDialogOpen.value = false;
+        await loadDashboard();
+    }
+}
+
+watch(cancelDialogOpen, (isOpen) => {
+    if (!isOpen) {
+        orderPendingCancellation.value = null;
+        cancelError.value = null;
+    }
+});
 
 const statusVariants: Record<OrderStatus, 'default' | 'secondary' | 'outline'> =
     {
@@ -488,6 +556,11 @@ const statusVariants: Record<OrderStatus, 'default' | 'secondary' | 'outline'> =
                                     >
                                         Placed
                                     </th>
+                                    <th
+                                        class="px-3 py-2 text-right font-medium"
+                                    >
+                                        Actions
+                                    </th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -536,6 +609,22 @@ const statusVariants: Record<OrderStatus, 'default' | 'secondary' | 'outline'> =
                                     >
                                         {{ order.placedAt }}
                                     </td>
+                                    <td class="px-3 py-2 text-right">
+                                        <Button
+                                            v-if="order.canCancel"
+                                            variant="outline"
+                                            size="sm"
+                                            @click="requestCancellation(order)"
+                                        >
+                                            Cancel
+                                        </Button>
+                                        <span
+                                            v-else
+                                            class="text-muted-foreground"
+                                        >
+                                            &mdash;
+                                        </span>
+                                    </td>
                                 </tr>
                             </tbody>
                         </table>
@@ -543,5 +632,53 @@ const statusVariants: Record<OrderStatus, 'default' | 'secondary' | 'outline'> =
                 </CardContent>
             </Card>
         </div>
+
+        <Dialog v-model:open="cancelDialogOpen">
+            <DialogContent>
+                <DialogHeader class="space-y-3">
+                    <DialogTitle>Cancel this order?</DialogTitle>
+                    <DialogDescription>
+                        <template v-if="orderPendingCancellation">
+                            Order {{ orderPendingCancellation.id }} ({{
+                                orderPendingCancellation.side
+                            }}
+                            {{ orderPendingCancellation.amount }}
+                            {{ orderPendingCancellation.market }} at
+                            {{ orderPendingCancellation.price }}) will be
+                            cancelled and any funds reserved for it will be
+                            released.
+                        </template>
+                        This cannot be undone.
+                    </DialogDescription>
+                </DialogHeader>
+
+                <p v-if="cancelError" class="text-sm text-destructive">
+                    {{ cancelError }}
+                </p>
+
+                <DialogFooter class="gap-2">
+                    <DialogClose as-child>
+                        <Button
+                            variant="secondary"
+                            :disabled="cancelRequest.processing"
+                        >
+                            Keep order
+                        </Button>
+                    </DialogClose>
+                    <Button
+                        variant="destructive"
+                        :disabled="cancelRequest.processing"
+                        @click="confirmCancellation"
+                    >
+                        <Spinner v-if="cancelRequest.processing" />
+                        {{
+                            cancelRequest.processing
+                                ? 'Cancelling…'
+                                : 'Cancel order'
+                        }}
+                    </Button>
+                </DialogFooter>
+            </DialogContent>
+        </Dialog>
     </div>
 </template>
