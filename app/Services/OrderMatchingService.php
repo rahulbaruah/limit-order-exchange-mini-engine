@@ -5,9 +5,11 @@ declare(strict_types=1);
 namespace App\Services;
 
 use App\Concerns\CalculatesOrderAmounts;
+use App\DTOs\OrderMatchedData;
 use App\DTOs\RecordTradeData;
 use App\Enums\OrderSide;
 use App\Enums\OrderStatus;
+use App\Events\OrderMatched;
 use App\Models\Order;
 use App\Models\Trade;
 use App\Repositories\AssetRepository;
@@ -71,7 +73,7 @@ class OrderMatchingService
         $this->orderRepository->updateStatus($buyOrder, OrderStatus::Filled);
         $this->orderRepository->updateStatus($sellOrder, OrderStatus::Filled);
 
-        return $this->tradeRepository->create(new RecordTradeData(
+        $trade = $this->tradeRepository->create(new RecordTradeData(
             buyOrderId: (int) $buyOrder->id,
             sellOrderId: (int) $sellOrder->id,
             buyerId: (int) $buyOrder->user_id,
@@ -82,6 +84,10 @@ class OrderMatchingService
             grossAmount: $gross->__toString(),
             fee: $fee->__toString(),
         ));
+
+        OrderMatched::dispatch(OrderMatchedData::fromTrade($trade));
+
+        return $trade;
     }
 
     /**

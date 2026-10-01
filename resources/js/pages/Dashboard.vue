@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { Head, useHttp } from '@inertiajs/vue3';
+import { Head, useHttp, usePage } from '@inertiajs/vue3';
+import { useEcho } from '@laravel/echo-vue';
 import { computed, onMounted, ref, watch } from 'vue';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -112,11 +113,7 @@ async function loadDashboard(): Promise<void> {
     loadError.value = null;
 
     try {
-        await Promise.all([
-            profileRequest.get(profileShow.url()),
-            btcOrdersRequest.get(ordersIndex.url({ query: { symbol: 'BTC' } })),
-            ethOrdersRequest.get(ordersIndex.url({ query: { symbol: 'ETH' } })),
-        ]);
+        await fetchDashboard();
     } catch {
         loadError.value =
             'Unable to load your balances and orders. Please try again.';
@@ -125,7 +122,32 @@ async function loadDashboard(): Promise<void> {
     }
 }
 
+function fetchDashboard(): Promise<unknown> {
+    return Promise.all([
+        profileRequest.get(profileShow.url()),
+        btcOrdersRequest.get(ordersIndex.url({ query: { symbol: 'BTC' } })),
+        ethOrdersRequest.get(ordersIndex.url({ query: { symbol: 'ETH' } })),
+    ]);
+}
+
+/** Refetch in the background so a live update doesn't flash the loading state. */
+async function refreshDashboard(): Promise<void> {
+    try {
+        await fetchDashboard();
+        loadError.value = null;
+    } catch {
+        loadError.value =
+            'Unable to load your balances and orders. Please try again.';
+    }
+}
+
 onMounted(loadDashboard);
+
+const page = usePage();
+
+useEcho(`user.${page.props.auth.user.id}`, '.OrderMatched', () => {
+    void refreshDashboard();
+});
 
 const walletSymbols = ['USD', 'BTC', 'ETH'] as const;
 
