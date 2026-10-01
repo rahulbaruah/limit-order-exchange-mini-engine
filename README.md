@@ -10,6 +10,8 @@
 
 The application supports authenticated buy and sell limit orders for BTC and ETH. Open orders reserve the required USD or asset balance, and cancelling an order releases that reservation.
 
+> **Important:** Full matches only; an order matches only when the buy and sell prices are equal.
+
 ## Get Started
 
 ### Requirements
