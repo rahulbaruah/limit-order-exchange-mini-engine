@@ -9,6 +9,14 @@ use App\Models\User;
 class UserRepository
 {
     /**
+     * Retrieve a user together with their asset balances.
+     */
+    public function findWithAssets(int $userId): User
+    {
+        return User::query()->with('assets')->findOrFail($userId);
+    }
+
+    /**
      * Retrieve a user by ID with a write lock for the duration of the transaction.
      */
     public function lockById(int $userId): User
