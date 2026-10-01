@@ -6,6 +6,7 @@ namespace App\Repositories;
 
 use App\Enums\Symbol;
 use App\Models\Asset;
+use Illuminate\Database\UniqueConstraintViolationException;
 use RuntimeException;
 
 class AssetRepository
@@ -27,10 +28,14 @@ class AssetRepository
      */
     public function findOrCreateForUpdate(int $userId, Symbol $symbol): Asset
     {
-        Asset::query()->firstOrCreate(
-            ['user_id' => $userId, 'symbol' => $symbol->value],
-            ['amount' => '0.00000000', 'locked_amount' => '0.00000000'],
-        );
+        try {
+            Asset::query()->firstOrCreate(
+                ['user_id' => $userId, 'symbol' => $symbol->value],
+                ['amount' => '0.00000000', 'locked_amount' => '0.00000000'],
+            );
+        } catch (UniqueConstraintViolationException $exception) {
+            return $this->findForUpdate($userId, $symbol) ?? throw $exception;
+        }
 
         return $this->findForUpdate($userId, $symbol)
             ?? throw new RuntimeException('The asset balance could not be created.');
